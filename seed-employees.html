@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>إضافة الموظفين - مرة واحدة فقط</title>
+<style>
+  body { font-family: Tahoma, Arial, sans-serif; padding: 20px; background: #f4f4f4; }
+  h2 { text-align: center; }
+  button {
+    display: block; width: 100%; padding: 16px; font-size: 18px;
+    background: #1a7d3a; color: white; border: none; border-radius: 8px;
+    margin: 20px 0; cursor: pointer;
+  }
+  button:disabled { background: #999; }
+  #log {
+    background: white; border: 1px solid #ccc; border-radius: 8px;
+    padding: 12px; font-size: 14px; line-height: 1.8; max-height: 500px;
+    overflow-y: auto; white-space: pre-wrap;
+  }
+  .ok { color: #1a7d3a; }
+  .err { color: #c0392b; }
+</style>
+</head>
+<body>
+
+<h2>إضافة قائمة الموظفين (25 موظف)</h2>
+<p style="text-align:center; color:#666;">هذه الصفحة تُستخدم مرة واحدة فقط لتعبئة قاعدة البيانات. بعد الانتهاء احذفها.</p>
+
+<button id="addBtn" onclick="addAll()">إضافة كل الموظفين إلى قاعدة البيانات</button>
+
+<div id="log">جاهز... اضغط الزر أعلاه للبدء.</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyCvQTWDDV-0f84fV36SPo6HIOOtmuYoyW0",
+  authDomain: "dhl-customs-ifada.firebaseapp.com",
+  projectId: "dhl-customs-ifada",
+  storageBucket: "dhl-customs-ifada.firebasestorage.app",
+  messagingSenderId: "707979991171",
+  appId: "1:707979991171:web:afe423a95b356f882523b6"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+const employees = [
+  { employeeNumber: "10611", name: "سند زكريا الخالدي", nationalId: "891108696" },
+  { employeeNumber: "19753", name: "عبدالله جاسم بحر", nationalId: "920104630" },
+  { employeeNumber: "7910", name: "رحاب عبداللطيف الحوبي", nationalId: "821101501" },
+  { employeeNumber: "27105", name: "أمل محمد عبدالرزاق", nationalId: "870911562" },
+  { employeeNumber: "10697", name: "مريم جاسم السندي", nationalId: "941006069" },
+  { employeeNumber: "27141", name: "نوف إبراهيم أحمد", nationalId: "861109830" },
+  { employeeNumber: "10516", name: "جاسم عبدالوهاب الفيحاني", nationalId: "860408965" },
+  { employeeNumber: "10495", name: "يوسف أحمد محمد", nationalId: "850607604" },
+  { employeeNumber: "10392", name: "نايف عقيل يوسف", nationalId: "770400825" },
+  { employeeNumber: "36061", name: "عيسى مبارك بحر", nationalId: "920311393" },
+  { employeeNumber: "10670", name: "عبدالرحمن يوسف سالم", nationalId: "930205030" },
+  { employeeNumber: "21227", name: "محمود علي البنكي", nationalId: "890507767" },
+  { employeeNumber: "10453", name: "حمد مبارك الدوسري", nationalId: "821006193" },
+  { employeeNumber: "1012", name: "عبدالله إبراهيم البورشيد", nationalId: "870600834" },
+  { employeeNumber: "10461", name: "خالد جمال الذوادي", nationalId: "830900217" },
+  { employeeNumber: "10827", name: "أحمد حسن التميمي", nationalId: "971200530" },
+  { employeeNumber: "10709", name: "أحمد صلاح مطر", nationalId: "981104223" },
+  { employeeNumber: "10498", name: "فهد عبدالرحمن بوجيري", nationalId: "850800080" },
+  { employeeNumber: "10805", name: "راشد عيسى المهيزع", nationalId: "990404994" },
+  { employeeNumber: "36050", name: "يوسف إبراهيم بورشيد", nationalId: "930202678" },
+  { employeeNumber: "10258", name: "حسن علي جعفر", nationalId: "670107743" },
+  { employeeNumber: "10528", name: "أحمد جمال المحميد", nationalId: "861102711" },
+  { employeeNumber: "10416", name: "فادي محمود سمور", nationalId: "790311089" },
+  { employeeNumber: "36064", name: "نواف صلاح الدوسري", nationalId: "931102862" },
+  { employeeNumber: "34690", name: "محمد شكري الزايد", nationalId: "950706965" }
+];
+
+async function addAll() {
+  const btn = document.getElementById('addBtn');
+  const log = document.getElementById('log');
+  btn.disabled = true;
+  log.textContent = "";
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const emp of employees) {
+    try {
+      await db.collection('employees').doc(emp.nationalId).set({
+        name: emp.name,
+        employeeNumber: emp.employeeNumber
+      });
+      log.innerHTML += `<span class="ok">✓ تمت إضافة: ${emp.name}</span>\n`;
+      successCount++;
+    } catch (e) {
+      log.innerHTML += `<span class="err">✗ فشل: ${emp.name} - ${e.message}</span>\n`;
+      errorCount++;
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+
+  log.innerHTML += `\n<b>انتهى: ${successCount} تمت إضافتهم، ${errorCount} فشلوا.</b>`;
+  btn.disabled = false;
+  btn.textContent = "تمت العملية - يمكنك حذف هذه الصفحة الآن";
+}
+</script>
+
+</body>
+</html>
