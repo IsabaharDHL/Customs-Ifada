@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>إدارة الموظفين - Customs Ifada</title>
+<style>
+  :root{ --gold:#c9a24a; --navy:#12213c; --muted:#6b7280; }
+  *{box-sizing:border-box;}
+  body{font-family:Tahoma,Arial,sans-serif; background:#f2f4f7; margin:0; padding:16px; direction:rtl;}
+  .card{background:#fff; border-radius:14px; padding:18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); max-width:480px; margin:0 auto 16px;}
+  h2{color:var(--navy); font-size:19px; margin:0 0 14px;}
+  h3{color:var(--navy); font-size:16px; margin:0 0 10px;}
+  label{display:block; font-size:14px; color:var(--navy); margin:10px 0 5px; font-weight:bold;}
+  input{width:100%; padding:11px 12px; font-size:16px; border:1.5px solid #dfe3ea; border-radius:10px; background:#f8f9fb;}
+  button{width:100%; padding:13px; font-size:16px; border:none; border-radius:10px; margin-top:14px; font-weight:bold; cursor:pointer;}
+  .btn-add{background:var(--navy); color:#fff;}
+  .btn-del{background:#c0392b; color:#fff;}
+  .btn-search{background:var(--gold); color:var(--navy);}
+  .status{margin-top:10px; font-size:14px; text-align:center; min-height:20px;}
+  .ok{color:#16794c;}
+  .err{color:#c0392b;}
+  .emp-row{display:flex; justify-content:space-between; align-items:center; padding:10px; border:1px solid #eee; border-radius:8px; margin-top:8px; font-size:14px;}
+  .lockbox{max-width:480px; margin:60px auto; text-align:center;}
+</style>
+</head>
+<body>
+
+<div id="lockScreen" class="lockbox">
+  <div class="card">
+    <h2>🔒 دخول محمي</h2>
+    <label>كلمة المرور</label>
+    <input type="password" id="pw" onkeydown="if(event.key==='Enter')checkPw()">
+    <button class="btn-add" onclick="checkPw()">دخول</button>
+    <div id="pwStatus" class="status"></div>
+  </div>
+</div>
+
+<div id="mainArea" style="display:none;">
+
+  <div class="card">
+    <h3>➕ إضافة موظف جديد</h3>
+    <label>رقم الهوية الشخصية</label>
+    <input type="text" id="newId" inputmode="numeric" lang="en">
+    <label>الاسم الكامل</label>
+    <input type="text" id="newName">
+    <label>الرقم الوظيفي</label>
+    <input type="text" id="newEmpNum" inputmode="numeric" lang="en">
+    <button class="btn-add" onclick="addEmployee()">إضافة الموظف</button>
+    <div id="addStatus" class="status"></div>
+  </div>
+
+  <div class="card">
+    <h3>🔍 بحث / مسح موظف</h3>
+    <label>رقم الهوية الشخصية</label>
+    <input type="text" id="searchId" inputmode="numeric" lang="en" onkeydown="if(event.key==='Enter')searchEmployee()">
+    <button class="btn-search" onclick="searchEmployee()">بحث</button>
+    <div id="searchResult"></div>
+    <div id="searchStatus" class="status"></div>
+  </div>
+
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyCvQTWDDV-0f84fV36SPo6HIOOtmuYoyW0",
+  authDomain: "dhl-customs-ifada.firebaseapp.com",
+  projectId: "dhl-customs-ifada",
+  storageBucket: "dhl-customs-ifada.firebasestorage.app",
+  messagingSenderId: "707979991171",
+  appId: "1:707979991171:web:afe423a95b356f882523b6"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+// Simple local passcode gate - not real security, just prevents accidental access
+const PASSCODE = "ifada2026";
+
+function checkPw() {
+  const val = document.getElementById('pw').value;
+  if (val === PASSCODE) {
+    document.getElementById('lockScreen').style.display = 'none';
+    document.getElementById('mainArea').style.display = 'block';
+  } else {
+    document.getElementById('pwStatus').innerHTML = '<span class="err">كلمة المرور غير صحيحة</span>';
+  }
+}
+
+async function addEmployee() {
+  const id = document.getElementById('newId').value.trim();
+  const name = document.getElementById('newName').value.trim();
+  const empNum = document.getElementById('newEmpNum').value.trim();
+  const statusEl = document.getElementById('addStatus');
+
+  if (!id || !name || !empNum) {
+    statusEl.innerHTML = '<span class="err">يرجى تعبئة كل الحقول</span>';
+    return;
+  }
+
+  statusEl.innerHTML = 'جاري الحفظ...';
+  try {
+    await db.collection('employees').doc(id).set({
+      name: name,
+      employeeNumber: empNum
+    });
+    statusEl.innerHTML = '<span class="ok">✔ تمت إضافة الموظف بنجاح</span>';
+    document.getElementById('newId').value = '';
+    document.getElementById('newName').value = '';
+    document.getElementById('newEmpNum').value = '';
+  } catch (err) {
+    statusEl.innerHTML = '<span class="err">خطأ: ' + err.message + '</span>';
+  }
+}
+
+async function searchEmployee() {
+  const id = document.getElementById('searchId').value.trim();
+  const resultEl = document.getElementById('searchResult');
+  const statusEl = document.getElementById('searchStatus');
+  resultEl.innerHTML = '';
+  statusEl.innerHTML = '';
+
+  if (!id) {
+    statusEl.innerHTML = '<span class="err">اكتب رقم الهوية أولاً</span>';
+    return;
+  }
+
+  statusEl.innerHTML = 'جاري البحث...';
+  try {
+    const doc = await db.collection('employees').doc(id).get();
+    if (!doc.exists) {
+      statusEl.innerHTML = '<span class="err">لا يوجد موظف بهذا الرقم</span>';
+      return;
+    }
+    statusEl.innerHTML = '';
+    const data = doc.data();
+    resultEl.innerHTML = `
+      <div class="emp-row">
+        <div>
+          <div><b>${data.name}</b></div>
+          <div style="color:#6b7280; font-size:12px;">رقم وظيفي: ${data.employeeNumber} | هوية: ${id}</div>
+        </div>
+        <button class="btn-del" style="width:auto; margin:0; padding:8px 14px;" onclick="deleteEmployee('${id}')">مسح</button>
+      </div>`;
+  } catch (err) {
+    statusEl.innerHTML = '<span class="err">خطأ: ' + err.message + '</span>';
+  }
+}
+
+async function deleteEmployee(id) {
+  if (!confirm('متأكد إنك تبي تمسح هذا الموظف نهائياً؟')) return;
+  const statusEl = document.getElementById('searchStatus');
+  statusEl.innerHTML = 'جاري الحذف...';
+  try {
+    await db.collection('employees').doc(id).delete();
+    statusEl.innerHTML = '<span class="ok">✔ تم حذف الموظف</span>';
+    document.getElementById('searchResult').innerHTML = '';
+    document.getElementById('searchId').value = '';
+  } catch (err) {
+    statusEl.innerHTML = '<span class="err">خطأ: ' + err.message + '</span>';
+  }
+}
+</script>
+</body>
+</html>
