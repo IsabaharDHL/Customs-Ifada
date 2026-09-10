@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<link rel="icon" href="logo.png">
+<link rel="apple-touch-icon" href="logo.png">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>مولد الإفادات - قسم DHL</title>
+<style>
+  :root {
+    --navy: #16264d;
+    --navy-dark: #0e1a38;
+    --gold: #c9a24a;
+    --gold-dark: #a9853a;
+    --bg: #eef1f6;
+    --card: #ffffff;
+    --text: #1c2333;
+    --muted: #6b7280;
+    --danger: #c0392b;
+    --success: #1a7d3a;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Tahoma, Arial, sans-serif;
+    background: var(--bg);
+    margin: 0;
+    padding: 0 0 40px;
+    color: var(--text);
+  }
+  .topbar {
+    background: linear-gradient(180deg, var(--navy) 0%, var(--navy-dark) 100%);
+    padding: 18px 16px 22px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 3px solid var(--gold);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .topbar img { width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0; }
+  .topbar .titles { flex: 1; }
+  .topbar h1 { font-size: 16px; color: #fff; margin: 0; font-weight: bold; }
+  .topbar p { font-size: 12px; color: var(--gold); margin: 2px 0 0; }
+
+  .content { padding: 16px; max-width: 480px; margin: 0 auto; }
+
+  .card {
+    background: var(--card);
+    border-radius: var(--radius);
+    padding: 18px;
+    margin-bottom: 14px;
+    box-shadow: 0 2px 8px rgba(22,38,77,0.08);
+    border: 1px solid rgba(22,38,77,0.06);
+  }
+  h3 {
+    font-size: 14px; margin: 0 0 14px; color: var(--navy);
+    padding-bottom: 8px; border-bottom: 2px solid #f0f2f6;
+    display: flex; align-items: center; gap: 6px;
+  }
+  label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 5px; margin-top: 12px; font-weight: bold; }
+  input[type=text], input[type=number], select, textarea {
+    width: 100%; padding: 11px 12px; font-size: 16px; border: 1.5px solid #dfe3ea;
+    border-radius: 10px; background: #f8f9fb; color: var(--text);
+    transition: border-color .15s, background .15s;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--navy); background: #fff; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .idlookup { display: flex; gap: 8px; align-items: flex-end; }
+  .idlookup > div { flex: 1; }
+  .idlookup button {
+    padding: 11px 18px; background: var(--navy); color: #fff; border: none;
+    border-radius: 10px; font-size: 13.5px; white-space: nowrap; font-weight: bold;
+    box-shadow: 0 2px 6px rgba(22,38,77,0.25);
+  }
+  .idlookup button:active { transform: scale(0.97); }
+  #lookupStatus { font-size: 12.5px; margin-top: 8px; }
+  .ok { color: var(--success); } .err { color: var(--danger); }
+  .checkline { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 10px 0; }
+  .checkline input { width: auto; accent-color: var(--navy); }
+  #regakuBox { display: none; padding-right: 20px; border-right: 3px solid var(--gold); margin-right: 4px; margin-top: 8px; }
+  #imgList { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  #imgList img { width: 72px; height: 72px; object-fit: cover; border-radius: 10px; border: 1px solid #ddd; }
+  .imgWrap { position: relative; }
+  .imgWrap span {
+    position: absolute; top: -6px; left: -6px; background: var(--danger); color: #fff;
+    width: 20px; height: 20px; border-radius: 50%; font-size: 12px; text-align: center;
+    line-height: 20px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  #generateBtn {
+    width: 100%; padding: 16px; font-size: 15.5px; font-weight: bold;
+    background: linear-gradient(180deg, var(--gold) 0%, var(--gold-dark) 100%);
+    color: var(--navy-dark); border: none; border-radius: 12px; margin-top: 6px;
+    box-shadow: 0 3px 10px rgba(201,162,74,0.4);
+  }
+  #generateBtn:active { transform: scale(0.98); }
+  #generateBtn:disabled { background: #ccc; box-shadow: none; color: #888; }
+  #statusMsg { text-align: center; font-size: 13px; margin-top: 10px; }
+  .fieldErr { color: var(--danger); font-size: 12px; margin-top: 3px; }
+  .logoutBtn {
+    background: #fff; border: 1.5px solid #dfe3ea; border-radius: 10px;
+    padding: 7px 12px; font-size: 12px; color: var(--muted);
+  }
+  .welcomeRow { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .welcomeRow span { font-size: 14px; font-weight: bold; color: var(--navy); }
+  input[type=file] {
+    width: 100%; padding: 10px; border: 1.5px dashed #c7cdd8; border-radius: 10px;
+    background: #f8f9fb; font-size: 13px; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <img src="logo.png" alt="شعار الجمارك">
+  <div class="titles">
+    <h1>مولد الإفادات</h1>
+    <p>قسم DHL - إدارة جمارك المنافذ الجوية</p>
+  </div>
+</div>
+
+<div class="content">
+
+<div class="card" id="loginCard">
+  <h3>تسجيل الدخول</h3>
+  <label>رقم الهوية الشخصية</label>
+  <div class="idlookup">
+    <div><input type="text" id="nationalId" placeholder="اكتب رقم هويتك" inputmode="numeric" lang="en" onkeydown="if(event.key==='Enter')lookupEmployee()"></div>
+    <button type="button" onclick="lookupEmployee()">دخول</button>
+  </div>
+  <div id="lookupStatus"></div>
+</div>
+<p style="text-align:center; font-size:11px; color:var(--gold); margin-top:-6px;">Powered by Isa Bahar</p>
+
+<div id="formArea" style="display:none;">
+
+<div class="card">
+  <div class="welcomeRow">
+    <span id="welcomeMsg"></span>
+    <button type="button" onclick="logout()" class="logoutBtn">تسجيل خروج</button>
+  </div>
+  <input type="hidden" id="empName">
+
+  <div class="row2">
+    <div>
+      <label>المهنة</label>
+      <select id="empJob">
+        <option value="">اختر المهنة</option>
+        <option value="مساعد ضابط جمارك">مساعد ضابط جمارك</option>
+        <option value="ضابط جمارك">ضابط جمارك</option>
+        <option value="ضابط جمارك اول">ضابط جمارك اول</option>
+        <option value="ضابط جمارك متقدم">ضابط جمارك متقدم</option>
+      </select>
+    </div>
+    <div>
+      <label>رقم الهاتف</label>
+      <input type="text" id="empPhone" inputmode="numeric" lang="en" oninput="this.value=normalizeDigits(this.value)">
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>تفاصيل الضبط</h3>
+  <div class="row2">
+    <div>
+      <label>رقم بوليصة الشحن</label>
+      <input type="text" id="awb">
+    </div>
+    <div>
+      <label>اسم المستورد</label>
+      <input type="text" id="importer">
+    </div>
+    <div>
+      <label>بلد القدوم</label>
+      <input type="text" id="fromCountry">
+    </div>
+  </div>
+
+  <label>نوع الشحنة</label>
+  <div style="display:flex; gap:18px; margin:6px 0 4px;">
+    <label style="display:flex; align-items:center; gap:6px; font-weight:normal; font-size:14px;">
+      <input type="radio" name="shipmentType" value="arriving" checked onchange="toggleShipmentType()" style="width:auto;">
+      قادمة
+    </label>
+    <label style="display:flex; align-items:center; gap:6px; font-weight:normal; font-size:14px;">
+      <input type="radio" name="shipmentType" value="transit" onchange="toggleShipmentType()" style="width:auto;">
+      عابرة
+    </label>
+  </div>
+  <div id="toCountryBox" style="display:none;">
+    <label>بلد الوجهة الأخيرة</label>
+    <input type="text" id="toCountry">
+  </div>
+
+  <label>عند فتح الطرد تبين بوجود</label>
+  <textarea id="openingDetails" rows="4" placeholder="مثال: 12 قنينة بوزن 11.10 كيلوجرام مخبأة داخل بطانة الحقيبة" style="width:100%; padding:11px 12px; font-size:16px; border:1.5px solid #dfe3ea; border-radius:10px; background:#f8f9fb; font-family:inherit; resize:vertical;"></textarea>
+
+  <div class="checkline">
+    <input type="checkbox" id="regakuCheck" onchange="document.getElementById('regakuBox').style.display=this.checked?'block':'none'">
+    <label style="margin:0;">تم الفحص بجهاز REGAKU</label>
+  </div>
+  <div id="regakuBox">
+    <label>نتيجة الفحص</label>
+    <input type="text" id="regakuResult" placeholder="مثال: Propylene glycol" style="display:none;">
+    <textarea id="regakuResultBox" rows="3" placeholder="مادة واحدة بكل سطر، مثال:&#10;Propylene glycol&#10;CBD 95%" style="width:100%; padding:11px 12px; font-size:16px; border:1.5px solid #dfe3ea; border-radius:10px; background:#f8f9fb; font-family:inherit; resize:vertical;"></textarea>
+  </div>
+
+  <div class="checkline">
+    <input type="checkbox" id="k9Check" onchange="document.getElementById('k9Box').style.display=this.checked?'block':'none'">
+    <label style="margin:0;">تم الاستعانة بوحدة جناح الأثر</label>
+  </div>
+  <div id="k9Box" style="display:none; padding-right:20px; border-right:3px solid var(--gold); margin-right:4px; margin-top:8px;">
+    <label>اسم الموظف</label>
+    <input type="text" id="k9EmployeeName">
+    <label>الرقم الشخصي</label>
+    <input type="text" id="k9EmployeeId" inputmode="numeric" lang="en">
+    <label>اسم الكلب</label>
+    <input type="text" id="k9DogName">
+  </div>
+
+  <div class="row2">
+    <div>
+      <label>رقم وصل الأمانة (P)</label>
+      <div style="display:flex; align-items:center;" dir="ltr">
+        <span style="padding:11px 10px; background:#eef0f3; border:1.5px solid #dfe3ea; border-left:none; border-radius:10px 0 0 10px; font-weight:bold; color:var(--navy);">P</span>
+        <input type="text" id="pNumber" inputmode="numeric" lang="en" style="border-radius:0 10px 10px 0;" oninput="this.value=normalizeDigits(this.value).replace(/[^0-9]/g,'')">
+      </div>
+    </div>
+    <div>
+      <label>رقم العينة</label>
+      <input type="text" id="sampleNumber" inputmode="numeric" lang="en" oninput="this.value=normalizeDigits(this.value)">
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>التوقيع</h3>
+  <p style="font-size:12px; color:var(--muted); margin:0 0 8px;">وقّع بإصبعك بالمربع أدناه، أو ارفع صورة توقيعك - يُستخدم لهذه الإفادة فقط ولا يُحفظ</p>
+  <canvas id="sigCanvas" style="border:1.5px dashed #c7cdd8; border-radius:10px; background:#fff; width:100%; height:130px; touch-action:none; display:block;"></canvas>
+  <div style="display:flex; gap:8px; margin-top:8px;">
+    <button type="button" onclick="clearSignature()" style="flex:1; padding:9px; background:#fff; border:1.5px solid #dfe3ea; border-radius:8px; font-size:13px; color:var(--muted);">مسح</button>
+  </div>
+  <label>أو ارفع صورة التوقيع</label>
+  <input type="file" accept="image/*" id="sigFileInput" onchange="handleSignatureFile(event)">
+  <div id="sigStatus" style="font-size:12px; margin-top:6px;"></div>
+</div>
+
+<div class="card">
+  <h3>المرفقات</h3>
+  <div class="checkline"><input type="checkbox" id="att1"><label style="margin:0;">وصل الأمانة</label></div>
+  <div class="checkline"><input type="checkbox" id="att2"><label style="margin:0;">بوليصة الشحن</label></div>
+  <div class="checkline"><input type="checkbox" id="att3"><label style="margin:0;">صور للمادة</label></div>
+  <div class="checkline"><input type="checkbox" id="att4"><label style="margin:0;">وحدة جناح الأثر</label></div>
+</div>
+
+<div class="card">
+  <h3>صور الأدلة</h3>
+  <input type="file" id="photoInput" accept="image/*" multiple onchange="handlePhotos(event)">
+  <div id="imgList"></div>
+</div>
+
+<div class="card">
+  <button id="generateBtn" onclick="generatePdf()">توليد الإفادة PDF</button>
+  <div id="statusMsg"></div>
+</div>
+
+</div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyCvQTWDDV-0f84fV36SPo6HIOOtmuYoyW0",
+  authDomain: "dhl-customs-ifada.firebaseapp.com",
+  projectId: "dhl-customs-ifada",
+  storageBucket: "dhl-customs-ifada.firebasestorage.app",
+  messagingSenderId: "707979991171",
+  appId: "1:707979991171:web:afe423a95b356f882523b6"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+let uploadedImages = [];
+let currentSignature = null;
+let sigCtx, sigDrawing = false, sigLastX = 0, sigLastY = 0;
+
+function initSignaturePad() {
+  const canvas = document.getElementById('sigCanvas');
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * 2;
+  canvas.height = rect.height * 2;
+  sigCtx = canvas.getContext('2d');
+  sigCtx.scale(2, 2);
+  sigCtx.strokeStyle = '#16264d';
+  sigCtx.lineWidth = 2.2;
+  sigCtx.lineCap = 'round';
+
+  function getPos(e) {
+    const r = canvas.getBoundingClientRect();
+    const point = e.touches ? e.touches[0] : e;
+    return { x: point.clientX - r.left, y: point.clientY - r.top };
+  }
+  function start(e) {
+    sigDrawing = true;
+    const p = getPos(e);
+    sigLastX = p.x; sigLastY = p.y;
+    e.preventDefault();
+  }
+  function move(e) {
+    if (!sigDrawing) return;
+    const p = getPos(e);
+    sigCtx.beginPath();
+    sigCtx.moveTo(sigLastX, sigLastY);
+    sigCtx.lineTo(p.x, p.y);
+    sigCtx.stroke();
+    sigLastX = p.x; sigLastY = p.y;
+    e.preventDefault();
+  }
+  function end() { sigDrawing = false; }
+
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', start, { passive: false });
+  canvas.addEventListener('touchmove', move, { passive: false });
+  canvas.addEventListener('touchend', end);
+}
+
+function clearSignature() {
+  const canvas = document.getElementById('sigCanvas');
+  sigCtx.clearRect(0, 0, canvas.width, canvas.height);
+  currentSignature = null;
+  document.getElementById('sigFileInput').value = '';
+  document.getElementById('sigStatus').textContent = '';
+}
+
+function handleSignatureFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    normalizeImage(e.target.result).then(fixedSrc => {
+      currentSignature = fixedSrc;
+      document.getElementById('sigStatus').innerHTML = '<span class="ok">تم إرفاق صورة التوقيع ✓</span>';
+    });
+  };
+  reader.readAsDataURL(file);
+}
+
+function captureCanvasSignature() {
+  const canvas = document.getElementById('sigCanvas');
+  const blank = document.createElement('canvas');
+  blank.width = canvas.width; blank.height = canvas.height;
+  const isBlank = canvas.toDataURL() === blank.toDataURL();
+  if (isBlank) return null;
+  return canvas.toDataURL('image/png');
+}
+
+function normalizeDigits(str) {
+  const arabicIndic = '٠١٢٣٤٥٦٧٨٩';
+  const persian = '۰۱۲۳۴۵۶۷۸۹';
+  return str.split('').map(ch => {
+    let idx = arabicIndic.indexOf(ch);
+    if (idx !== -1) return String(idx);
+    idx = persian.indexOf(ch);
+    if (idx !== -1) return String(idx);
+    return ch;
+  }).join('');
+}
+
+function toggleShipmentType() {
+  const isTransit = document.querySelector('input[name="shipmentType"]:checked').value === 'transit';
+  document.getElementById('toCountryBox').style.display = isTransit ? 'block' : 'none';
+  if (!isTransit) document.getElementById('toCountry').value = '';
+}
+
+// Global safety net: converts Arabic/Persian digits to English the moment
+// they're typed anywhere on the page, in addition to any field-specific handling.
+document.addEventListener('input', function (e) {
+  const el = e.target;
+  if (el.tagName === 'INPUT' && el.type !== 'text' && el.type !== 'tel' && el.type !== 'number') return;
+  if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') return;
+  const converted = normalizeDigits(el.value);
+  if (converted !== el.value) {
+    const pos = el.selectionStart;
+    el.value = converted;
+    if (pos !== null && el.setSelectionRange) {
+      try { el.setSelectionRange(pos, pos); } catch (err) { /* ignore */ }
+    }
+  }
+});
+
+async function lookupEmployee() {
+  const raw = document.getElementById('nationalId').value.trim();
+  const id = normalizeDigits(raw).replace(/[^0-9]/g, '');
+  document.getElementById('nationalId').value = id;
+  const statusEl = document.getElementById('lookupStatus');
+  if (!id) {
+    statusEl.innerHTML = '<span class="err">اكتب رقم الهوية أولاً</span>';
+    return;
+  }
+  statusEl.textContent = 'جاري البحث...';
+  try {
+    const doc = await db.collection('employees').doc(id).get();
+    if (doc.exists) {
+      const data = doc.data();
+      document.getElementById('empName').value = data.name || '';
+      statusEl.innerHTML = '<span class="ok">تم تسجيل الدخول ✓</span>';
+      document.getElementById('welcomeMsg').textContent = 'مرحباً، ' + (data.name || '');
+      document.getElementById('loginCard').style.display = 'none';
+      document.getElementById('formArea').style.display = 'block';
+      initSignaturePad();
+    } else {
+      document.getElementById('empName').value = '';
+      statusEl.innerHTML = '<span class="err">الرقم غير مسجل، تأكد منه أو تواصل مع المسؤول</span>';
+    }
+  } catch (e) {
+    statusEl.innerHTML = '<span class="err">خطأ بالاتصال: ' + e.message + '</span>';
+  }
+}
+
+function logout() {
+  document.getElementById('formArea').style.display = 'none';
+  document.getElementById('loginCard').style.display = 'block';
+  document.getElementById('nationalId').value = '';
+  document.getElementById('empName').value = '';
+  document.getElementById('lookupStatus').textContent = '';
+  currentSignature = null;
+  uploadedImages = [];
+  renderImgList();
+}
+
+function handlePhotos(event) {
+  const files = Array.from(event.target.files);
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      normalizeImage(e.target.result).then(fixedSrc => {
+        uploadedImages.push(fixedSrc);
+        renderImgList();
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+  event.target.value = '';
+}
+
+// Redraws the photo onto a canvas at its natural decoded size so the
+// orientation the browser already applied gets baked into the pixels,
+// preventing the rotated/squeezed look when the file is later embedded in the PDF.
+function normalizeImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxDim = 1600;
+      let w = img.naturalWidth || img.width;
+      let h = img.naturalHeight || img.height;
+      if (w > maxDim || h > maxDim) {
+        const scale = Math.min(maxDim / w, maxDim / h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function renderImgList() {
+  const list = document.getElementById('imgList');
+  list.innerHTML = '';
+  uploadedImages.forEach((src, idx) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'imgWrap';
+    wrap.innerHTML = `<img src="${src}"><span onclick="removeImg(${idx})">×</span>`;
+    list.appendChild(wrap);
+  });
+}
+
+function removeImg(idx) {
+  uploadedImages.splice(idx, 1);
+  renderImgList();
+}
+
+function todayArabicDateTime() {
+  const days = ['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+  const now = new Date();
+  const dayName = days[now.getDay()];
+  const y = now.getFullYear();
+  const m = String(now.getMonth()+1).padStart(2,'0');
+  const d = String(now.getDate()).padStart(2,'0');
+  let hours = now.getHours();
+  const minutes = String(now.getMinutes()).padStart(2,'0');
+  const ampm = hours >= 12 ? 'مساءً' : 'صباحاً';
+  hours = hours % 12; if (hours === 0) hours = 12;
+  return {
+    text: `${dayName} الموافق ${y}/${m}/${d} وفي تمام الساعة ${hours}:${minutes} ${ampm}`,
+    iso: now.toISOString()
+  };
+}
+
+function buildTemplate(data, dt) {
+  // Fix for a html2canvas Arabic-shaping bug: a digit directly touching an
+  // Arabic letter (e.g. "10كلغ") can render corrupted. Force a thin space
+  // between any digit run and adjacent Arabic letters before rendering.
+  const fixDigitLetterSpacing = (s) => (s || '')
+    .replace(/([0-9]+)([\u0600-\u06FF])/g, '$1 $2')
+    .replace(/([\u0600-\u06FF])([0-9]+)/g, '$1 $2');
+  ['openingDetails', 'awb', 'importer', 'fromCountry', 'toCountry', 'regakuResult', 'k9EmployeeName', 'k9DogName']
+    .forEach(k => { if (data[k]) data[k] = fixDigitLetterSpacing(data[k]); });
+
+  let regakuLine = '';
+  if (data.regakuCheck) {
+    const lines = (data.regakuResult || '').split('\n').map(s => s.trim()).filter(Boolean);
+    const listHtml = lines.map(s => `<div>• ${s}</div>`).join('');
+    regakuLine = `<p style="margin:4px 0;">وتم فحص المادة بجهاز REGAKU بنتائج تحتوي على مادة:</p>${listHtml}`;
+  }
+  let k9Line = '';
+  if (data.k9Check) {
+    const idPart = data.k9EmployeeId ? ` برقم شخصي رقم ${data.k9EmployeeId}` : '';
+    k9Line = `<p style="margin:4px 0;">تم الاستعانة بوحدة جناح الأثر: الموظف ${data.k9EmployeeName}${idPart} برفقة الكلب ${data.k9DogName} وتم اعطاء اشارة اشتباه بالطرد.</p>`;
+  }
+  const attachments = [];
+  if (data.att1) attachments.push('وصل الأمانة');
+  if (data.att2) attachments.push('بوليصة الشحن');
+  if (data.att3) attachments.push('صور للمادة');
+  if (data.att4) attachments.push('وحدة جناح الأثر');
+  const attHtml = attachments.map(a => `<div>- ${a}</div>`).join('');
+  const labelBg = 'background:#eef0f3; font-weight:bold;';
+
+  return `
+  <div style="width:750px; padding:40px; background:#fff; font-family:Arial,Tahoma,sans-serif; direction:rtl; color:#111;">
+    <div style="text-align:center; margin-bottom:6px;">
+      <img src="header.png" style="width:100%; max-width:650px;">
+      <div style="border-bottom:2px solid #0c447c; margin:6px auto 0; width:100%;"></div>
+      <div style="font-size:16px; font-weight:bold; text-decoration:underline; margin-top:6px;">قسم DHL</div>
+    </div>
+    <div style="text-align:center; font-size:24px; font-weight:bold; margin:20px 0;">إفـــــــادة</div>
+
+    <table style="width:100%; border-collapse:collapse; font-size:14px; margin-bottom:18px;">
+      <tr>
+        <td style="border:1px solid #999; padding:6px; text-align:center; ${labelBg}">الإدارة</td>
+        <td style="border:1px solid #999; padding:6px; text-align:center;">إدارة جمارك المنافذ الجوية</td>
+        <td style="border:1px solid #999; padding:6px; text-align:center; ${labelBg}">المنفذ</td>
+        <td style="border:1px solid #999; padding:6px; text-align:center;">DHL</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #999; padding:6px; text-align:center; ${labelBg}">الاسم</td>
+        <td style="border:1px solid #999; padding:6px; text-align:center;">${data.empName}</td>
+        <td style="border:1px solid #999; padding:6px; text-align:center; ${labelBg}">المهنة</td>
+        <td style="border:1px solid #999; padding:6px; text-align:center;">${data.empJob}</td>
+      </tr>
+      <tr>
+        <td style="border:1px solid #999; padding:6px; text-align:center; ${labelBg}">رقم الهوية</td>
+        <td style="border:1px solid #999; padding:6px; text-align:center;">${data.nationalId}</td>
+        <td style="border:1px solid #999; padding:6px; text-align:center; ${labelBg}">رقم الهاتف</td>
+        <td style="border:1px solid #999; padding:6px; text-align:center;">${data.empPhone}</td>
+      </tr>
+    </table>
+
+    <div style="font-size:12px; line-height:1.5; text-align:justify;">
+      <p style="margin:4px 0;">أود إفادتكم بأن في يوم ${dt.text} وأثناء قيامي بمهام عملي بتفتيش الطرود ${data.shipmentType === 'transit' ? 'العابرة من' : 'القادمة الى'} مملكة البحرين عبر جهاز الأشعة Rapiscan 627 dv، تم الاشتباه بطرد يحمل بوليصة شحن رقم ${data.awb}.</p>
+      <p style="margin:4px 0;">قادم من ${data.fromCountry} باسم ${data.importer}${data.shipmentType === 'transit' ? ' متجه الى ' + data.toCountry : ''}، وعند فتح الطرد تبين بوجود ${data.openingDetails}.</p>
+      ${regakuLine}
+      ${k9Line}
+      <p style="margin:4px 0;">تم حجز الطرد بموجب وصل أمانة رقم P${data.pNumber}.</p>
+      ${data.sampleNumber ? `<p style="margin:4px 0;">وتم تحويل عينة الى المختبر الجنائي برقم ${data.sampleNumber}.</p>` : ''}
+      <p style="margin:4px 0;">تم تحويل الموضوع الى مكتب البحث والتحري للإجراء اللازم..</p>
+    </div>
+
+    <div style="margin-top:10px; font-size:7px;">
+      <div style="font-weight:bold; margin-bottom:4px;">المرفقات:</div>
+      <div style="line-height:1.5;">${attHtml}</div>
+    </div>
+
+    <p style="text-align:center; font-weight:bold; font-size:14px; margin-top:28px;">وفي الختام تقبلوا خالص التحية والاحترام ،،</p>
+
+    <div style="margin-top:40px; font-size:14px; text-align:left;">
+      <div style="display:inline-flex; align-items:center; gap:10px;">
+        <span>التوقيع:</span>
+        ${data.signature
+          ? `<img src="${data.signature}" style="height:50px;">`
+          : `<div style="border-bottom:1px solid #333; width:170px; height:36px;"></div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function collectFormData() {
+  const g = id => normalizeDigits(document.getElementById(id).value.trim());
+  return {
+    nationalId: g('nationalId'),
+    empName: g('empName'),
+    empJob: g('empJob'),
+    empPhone: g('empPhone'),
+    awb: g('awb'),
+    importer: g('importer'),
+    fromCountry: g('fromCountry'),
+    shipmentType: document.querySelector('input[name="shipmentType"]:checked').value,
+    toCountry: g('toCountry'),
+    openingDetails: g('openingDetails'),
+    regakuCheck: document.getElementById('regakuCheck').checked,
+    regakuResult: g('regakuResultBox'),
+    k9Check: document.getElementById('k9Check').checked,
+    k9EmployeeName: g('k9EmployeeName'),
+    k9EmployeeId: g('k9EmployeeId'),
+    k9DogName: g('k9DogName'),
+    pNumber: g('pNumber'),
+    sampleNumber: g('sampleNumber'),
+    att1: document.getElementById('att1').checked,
+    att2: document.getElementById('att2').checked,
+    att3: document.getElementById('att3').checked,
+    att4: document.getElementById('att4').checked
+  };
+}
+
+function validateFormData(data) {
+  const required = ['nationalId','empName','empJob','empPhone','awb','importer','fromCountry','openingDetails','pNumber'];
+  for (const key of required) {
+    if (!data[key]) return `يرجى تعبئة كل الحقول قبل التوليد (الحقل الناقص: ${key})`;
+  }
+  if (data.shipmentType === 'transit' && !data.toCountry) return 'يرجى كتابة بلد الوجهة الأخيرة أو اختيار شحنة قادمة';
+  if (data.regakuCheck && !data.regakuResult) return 'يرجى كتابة نتيجة الفحص أو إلغاء تحديد REGAKU';
+  if (data.k9Check && (!data.k9EmployeeName || !data.k9DogName)) return 'يرجى كتابة اسم الموظف واسم الكلب أو إلغاء تحديد وحدة جناح الأثر';
+  return null;
+}
+
+async function generatePdf() {
+  const btn = document.getElementById('generateBtn');
+  const statusMsg = document.getElementById('statusMsg');
+  const data = collectFormData();
+  data.signature = captureCanvasSignature() || currentSignature || null;
+
+  const errMsg = validateFormData(data);
+  if (errMsg) {
+    statusMsg.innerHTML = '<span class="fieldErr">' + errMsg + '</span>';
+    return;
+  }
+
+  btn.disabled = true;
+  statusMsg.textContent = 'جاري توليد الملف...';
+
+  const dt = todayArabicDateTime();
+
+  const holder = document.createElement('div');
+  holder.style.position = 'fixed';
+  holder.style.top = '-9999px';
+  holder.style.left = '-9999px';
+  holder.innerHTML = buildTemplate(data, dt);
+  document.body.appendChild(holder);
+
+  try {
+    const imgs = holder.querySelectorAll('img');
+    await Promise.all(Array.from(imgs).map(im => im.complete ? Promise.resolve() : new Promise(res => { im.onload = res; im.onerror = res; })));
+    if (document.fonts) {
+      try { await document.fonts.ready; } catch (fontErr) { /* continue */ }
+    }
+    await new Promise(res => setTimeout(res, 100));
+
+    const canvas = await html2canvas(holder.firstElementChild, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+    document.body.removeChild(holder);
+
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imgProps = { w: canvas.width, h: canvas.height };
+    const imgHeight = (imgProps.h * pageWidth) / imgProps.w;
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageWidth, Math.min(imgHeight, pageHeight));
+
+    for (const imgSrc of uploadedImages) {
+      pdf.addPage();
+      const img = await loadImage(imgSrc);
+      const ratio = Math.min((pageWidth - 20) / img.width, (pageHeight - 20) / img.height);
+      const w = img.width * ratio;
+      const h = img.height * ratio;
+      const x = (pageWidth - w) / 2;
+      const y = (pageHeight - h) / 2;
+      pdf.addImage(imgSrc, 'JPEG', x, y, w, h);
+    }
+
+    const fileName = `ifada_P${data.pNumber || 'draft'}.pdf`;
+    const pdfBlob = pdf.output('blob');
+    const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
+    const pdfUrl = URL.createObjectURL(pdfBlob);
+
+    await db.collection('ifadat').add({
+      ...data,
+      createdAtText: dt.text,
+      createdAtIso: dt.iso,
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    showPreview(pdfUrl, pdfFile, pdf, fileName);
+    statusMsg.innerHTML = '<span class="ok">تم توليد الإفادة ✓ راجعها قبل الإرسال</span>';
+  } catch (e) {
+    statusMsg.innerHTML = '<span class="fieldErr">حدث خطأ: ' + e.message + '</span>';
+  }
+  btn.disabled = false;
+}
+
+function showPreview(pdfUrl, pdfFile, pdf, fileName) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed; inset:0; background:#000; z-index:999; display:flex; flex-direction:column;';
+  overlay.innerHTML = `
+    <div style="background:var(--navy); padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
+      <span style="color:#fff; font-size:14px; font-weight:bold;">معاينة الإفادة</span>
+      <button id="closePreviewBtn" style="background:none; border:none; color:#fff; font-size:20px; padding:0 6px;">×</button>
+    </div>
+    <iframe src="${pdfUrl}" style="flex:1; border:none; background:#333;"></iframe>
+    <div style="background:#fff; padding:12px 16px; display:flex; gap:10px;">
+      <button id="downloadPreviewBtn" style="flex:1; padding:13px; background:#fff; border:1.5px solid #dfe3ea; border-radius:10px; font-size:14px; color:var(--navy); font-weight:bold;">تحميل</button>
+      <button id="sharePreviewBtn" style="flex:2; padding:13px; background:linear-gradient(180deg, var(--gold) 0%, var(--gold-dark) 100%); border:none; border-radius:10px; font-size:14px; color:var(--navy-dark); font-weight:bold;">مشاركة / إرسال</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('closePreviewBtn').onclick = () => {
+    document.body.removeChild(overlay);
+    URL.revokeObjectURL(pdfUrl);
+  };
+  document.getElementById('downloadPreviewBtn').onclick = () => pdf.save(fileName);
+  document.getElementById('sharePreviewBtn').onclick = async () => {
+    if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+      try {
+        await navigator.share({ files: [pdfFile], title: fileName, text: 'إفادة DHL' });
+      } catch (e) { /* user cancelled */ }
+    } else {
+      pdf.save(fileName);
+    }
+  };
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+</script>
+
+</body>
+</html>
