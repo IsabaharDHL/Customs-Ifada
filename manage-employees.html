@@ -28,42 +28,55 @@
 
 <div id="lockScreen" class="lockbox">
   <div class="card">
-    <h2>🔒 دخول محمي</h2>
-    <label>كلمة المرور</label>
-    <input type="password" id="pw" onkeydown="if(event.key==='Enter')checkPw()">
-    <button class="btn-add" onclick="checkPw()">دخول</button>
-    <div id="pwStatus" class="status"></div>
+    <h2>🔒 دخول المسؤول</h2>
+    <label for="adminId">الرقم الشخصي</label>
+    <input type="text" id="adminId" inputmode="numeric" autocomplete="username" oninput="resetAdminRoute()" onkeydown="if(event.key==='Enter')lookupAdmin()">
+    <button id="lookupAdminButton" class="btn-add" onclick="lookupAdmin()">متابعة</button>
+    <div id="adminPasswordArea" style="display:none;">
+      <label id="adminPasswordLabel" for="adminPassword">كلمة المرور</label>
+      <input type="password" id="adminPassword" autocomplete="current-password" onkeydown="if(event.key==='Enter')loginAdmin()">
+      <div id="adminConfirmArea" style="display:none;">
+        <label for="adminPasswordConfirm">تأكيد كلمة المرور</label>
+        <input type="password" id="adminPasswordConfirm" autocomplete="new-password" onkeydown="if(event.key==='Enter')loginAdmin()">
+      </div>
+      <button id="loginAdminButton" class="btn-add" onclick="loginAdmin()">دخول</button>
+    </div>
+    <div id="pwStatus" class="status" role="status" aria-live="polite"></div>
+    <p style="font-size:12px;color:var(--muted);">صلاحية الإدارة تمنح من حساب مسؤول معتمد. إعداد أول مسؤول يتم بواسطة مالك المشروع، ولا يمكن إنشاؤه من هذه الصفحة.</p>
   </div>
 </div>
 
 <div id="mainArea" style="display:none;">
+  <div class="card"><span id="adminWelcome"></span><button class="btn-search" onclick="logoutAdmin()">تسجيل الخروج</button></div>
 
   <div class="card">
-    <h3>➕ إضافة موظف جديد</h3>
+    <h3>➕ إضافة موظف / إعادة تفعيل الدخول</h3>
     <label>رقم الهوية الشخصية</label>
     <input type="text" id="newId" inputmode="numeric" lang="en">
     <label>الاسم الكامل</label>
     <input type="text" id="newName">
     <label>الرقم الوظيفي</label>
     <input type="text" id="newEmpNum" inputmode="numeric" lang="en">
-    <button class="btn-add" onclick="addEmployee()">إضافة الموظف</button>
+    <button class="btn-add" onclick="addEmployee()">إضافة / إعادة إضافة الموظف</button>
     <div id="addStatus" class="status"></div>
   </div>
 
   <div class="card">
-    <h3>🔍 بحث / مسح موظف</h3>
+    <h3>🔍 بحث / إيقاف دخول موظف</h3>
     <label>رقم الهوية الشخصية</label>
     <input type="text" id="searchId" inputmode="numeric" lang="en" onkeydown="if(event.key==='Enter')searchEmployee()">
     <button class="btn-search" onclick="searchEmployee()">بحث</button>
+    <p style="font-size:12px;color:var(--muted);">لاستعادة الدخول عند نسيان كلمة المرور: أوقف الدخول ثم أعد إضافة الرقم. يختار الموظف كلمة مرور جديدة، وتبقى بياناته وإفاداته السابقة محفوظة.</p>
     <div id="searchResult"></div>
     <div id="searchStatus" class="status"></div>
   </div>
 
 </div>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getFirestore, doc, getDocFromServer } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { createEmployeeAuth, employeeAuthErrorMessage } from './employee-auth.js';
 const firebaseConfig = {
   apiKey: "AIzaSyCvQTWDDV-0f84fV36SPo6HIOOtmuYoyW0",
   authDomain: "dhl-customs-ifada.firebaseapp.com",
@@ -72,95 +85,187 @@ const firebaseConfig = {
   messagingSenderId: "707979991171",
   appId: "1:707979991171:web:afe423a95b356f882523b6"
 };
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
-
-// Simple local passcode gate - not real security, just prevents accidental access
-const PASSCODE = "ifada2026";
-
-function checkPw() {
-  const val = document.getElementById('pw').value;
-  if (val === PASSCODE) {
-    document.getElementById('lockScreen').style.display = 'none';
-    document.getElementById('mainArea').style.display = 'block';
-  } else {
-    document.getElementById('pwStatus').innerHTML = '<span class="err">كلمة المرور غير صحيحة</span>';
-  }
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const employeeAuth = createEmployeeAuth(app, db);
+let adminIdentity = null;
+let adminRoute = null;
+let authBusy = false;
+let actionBusy = false;
+let lookupVersion = 0;
+const el = id => document.getElementById(id);
+const canManage = identity => Boolean(identity && (identity.isOwnerAdmin || identity.profile.isAdmin === true || identity.profile.isSuper === true));
+function showStatus(id, text, error = false) {
+  el(id).textContent = text;
+  el(id).className = 'status ' + (error ? 'err' : '');
 }
-
-async function addEmployee() {
-  const id = document.getElementById('newId').value.trim();
-  const name = document.getElementById('newName').value.trim();
-  const empNum = document.getElementById('newEmpNum').value.trim();
-  const statusEl = document.getElementById('addStatus');
-
-  if (!id || !name || !empNum) {
-    statusEl.innerHTML = '<span class="err">يرجى تعبئة كل الحقول</span>';
-    return;
-  }
-
-  statusEl.innerHTML = 'جاري الحفظ...';
-  try {
-    await db.collection('employees').doc(id).set({
-      name: name,
-      employeeNumber: empNum
-    });
-    statusEl.innerHTML = '<span class="ok">✔ تمت إضافة الموظف بنجاح</span>';
-    document.getElementById('newId').value = '';
-    document.getElementById('newName').value = '';
-    document.getElementById('newEmpNum').value = '';
-  } catch (err) {
-    statusEl.innerHTML = '<span class="err">خطأ: ' + err.message + '</span>';
-  }
+function normalizeNumber(value) {
+  return value.trim().replace(/[٠-٩۰-۹]/g, c => String('٠١٢٣٤٥٦٧٨٩'.includes(c) ? '٠١٢٣٤٥٦٧٨٩'.indexOf(c) : '۰۱۲۳۴۵۶۷۸۹'.indexOf(c)));
 }
-
-async function searchEmployee() {
-  const id = document.getElementById('searchId').value.trim();
-  const resultEl = document.getElementById('searchResult');
-  const statusEl = document.getElementById('searchStatus');
-  resultEl.innerHTML = '';
-  statusEl.innerHTML = '';
-
-  if (!id) {
-    statusEl.innerHTML = '<span class="err">اكتب رقم الهوية أولاً</span>';
-    return;
-  }
-
-  statusEl.innerHTML = 'جاري البحث...';
+function setAuthBusy(value) {
+  authBusy = value;
+  for (const id of ['adminId', 'lookupAdminButton', 'loginAdminButton']) el(id).disabled = value;
+}
+function resetAdminRoute() {
+  lookupVersion++;
+  adminRoute = null;
+  el('adminPasswordArea').style.display = 'none';
+  el('adminPassword').value = '';
+  el('adminPasswordConfirm').value = '';
+  showStatus('pwStatus', '');
+}
+async function lookupAdmin() {
+  if (authBusy) return;
+  resetAdminRoute();
+  const version = lookupVersion;
+  const id = normalizeNumber(el('adminId').value);
+  el('adminId').value = id;
+  setAuthBusy(true);
+  showStatus('pwStatus', 'جاري التحقق...');
   try {
-    const doc = await db.collection('employees').doc(id).get();
-    if (!doc.exists) {
-      statusEl.innerHTML = '<span class="err">لا يوجد موظف بهذا الرقم</span>';
-      return;
+    const route = await employeeAuth.readRoute(id);
+    if (version !== lookupVersion) return;
+    if (!route?.enabled) return showStatus('pwStatus', 'الرقم غير مسجل أو تم إيقاف دخوله. تواصل مع مالك المشروع.', true);
+    adminRoute = route;
+    const first = route.state === 'pending';
+    el('adminPasswordArea').style.display = 'block';
+    el('adminConfirmArea').style.display = first ? 'block' : 'none';
+    el('adminPasswordLabel').textContent = first ? 'اختر كلمة مرور من 8 أحرف على الأقل' : 'كلمة المرور';
+    el('adminPassword').autocomplete = first ? 'new-password' : 'current-password';
+    el('loginAdminButton').textContent = first ? 'تعيين كلمة المرور والدخول' : 'دخول';
+    el('adminPassword').focus();
+    showStatus('pwStatus', '');
+  } catch (error) { showStatus('pwStatus', employeeAuthErrorMessage(error), true); }
+  finally { setAuthBusy(false); }
+}
+async function loginAdmin() {
+  if (authBusy || !adminRoute) return;
+  const first = adminRoute.state === 'pending';
+  const password = el('adminPassword').value;
+  if (!password || (first && password.length < 8)) return showStatus('pwStatus', 'اكتب كلمة مرور من 8 أحرف على الأقل.', true);
+  if (first && password !== el('adminPasswordConfirm').value) return showStatus('pwStatus', 'كلمتا المرور غير متطابقتين.', true);
+  setAuthBusy(true);
+  showStatus('pwStatus', 'جاري تسجيل الدخول...');
+  try {
+    const identity = await employeeAuth[first ? 'enroll' : 'login'](adminRoute.employeeId, password);
+    if (!canManage(identity)) {
+      await employeeAuth.logout();
+      return showStatus('pwStatus', 'هذا الحساب لا يملك صلاحية إدارة الموظفين.', true);
     }
-    statusEl.innerHTML = '';
-    const data = doc.data();
-    resultEl.innerHTML = `
-      <div class="emp-row">
-        <div>
-          <div><b>${data.name}</b></div>
-          <div style="color:#6b7280; font-size:12px;">رقم وظيفي: ${data.employeeNumber} | هوية: ${id}</div>
-        </div>
-        <button class="btn-del" style="width:auto; margin:0; padding:8px 14px;" onclick="deleteEmployee('${id}')">مسح</button>
-      </div>`;
-  } catch (err) {
-    statusEl.innerHTML = '<span class="err">خطأ: ' + err.message + '</span>';
-  }
+    applyAdminIdentity(identity);
+    el('adminPassword').value = '';
+    el('adminPasswordConfirm').value = '';
+  } catch (error) { showStatus('pwStatus', employeeAuthErrorMessage(error), true); }
+  finally { setAuthBusy(false); }
 }
-
-async function deleteEmployee(id) {
-  if (!confirm('متأكد إنك تبي تمسح هذا الموظف نهائياً؟')) return;
-  const statusEl = document.getElementById('searchStatus');
-  statusEl.innerHTML = 'جاري الحذف...';
+let adminViewVersion = 0;
+function currentAdminView() {
+  const version = adminViewVersion, uid = adminIdentity?.uid;
+  return () => version === adminViewVersion && !!uid && uid === adminIdentity?.uid;
+}
+function applyAdminIdentity(identity) {
+  if (adminIdentity?.uid !== (canManage(identity) ? identity.uid : null)) adminViewVersion++;
+  adminIdentity = canManage(identity) ? identity : null;
+  el('lockScreen').style.display = adminIdentity ? 'none' : 'block';
+  el('mainArea').style.display = adminIdentity ? 'block' : 'none';
+  if (adminIdentity) el('adminWelcome').textContent = 'مرحباً، ' + (adminIdentity.profile.name || 'المسؤول');
+  else { el('searchResult').replaceChildren(); showStatus('searchStatus', ''); }
+}
+async function logoutAdmin() {
+  applyAdminIdentity(null);
+  resetAdminRoute();
+  el('adminId').value = '';
+  try { await employeeAuth.logout(); }
+  catch (error) { showStatus('pwStatus', employeeAuthErrorMessage(error), true); }
+}
+async function requireAdmin() {
+  const isCurrent = currentAdminView();
+  const identity = await employeeAuth.restore();
+  if (!isCurrent()) throw Object.assign(new Error(), { code: 'employee/access-denied' });
+  applyAdminIdentity(identity);
+  if (!canManage(identity)) throw Object.assign(new Error(), { code: 'employee/admin-required' });
+}
+async function addEmployee() {
+  if (!adminIdentity) return;
+  const isCurrent = currentAdminView();
+  if (actionBusy) return;
+  const id = normalizeNumber(el('newId').value);
+  const name = el('newName').value.trim();
+  const employeeNumber = normalizeNumber(el('newEmpNum').value);
+  if (!id || !name || !employeeNumber) return showStatus('addStatus', 'يرجى تعبئة كل الحقول.', true);
+  actionBusy = true;
+  showStatus('addStatus', 'جاري الحفظ...');
   try {
-    await db.collection('employees').doc(id).delete();
-    statusEl.innerHTML = '<span class="ok">✔ تم حذف الموظف</span>';
-    document.getElementById('searchResult').innerHTML = '';
-    document.getElementById('searchId').value = '';
-  } catch (err) {
-    statusEl.innerHTML = '<span class="err">خطأ: ' + err.message + '</span>';
-  }
+    await requireAdmin();
+    const route = await employeeAuth.readRoute(id);
+    if (!isCurrent()) return;
+    if (route?.enabled) throw Object.assign(new Error(), { code: 'employee/already-active' });
+    if (route) await employeeAuth.readdEmployee(id, { name, employeeNumber });
+    else await employeeAuth.addEmployee(id, { name, employeeNumber });
+    if (!isCurrent()) return;
+    showStatus('addStatus', '✔ تم حفظ الموظف. يمكنه اختيار كلمة مرور عند أول دخول.');
+    for (const field of ['newId', 'newName', 'newEmpNum']) el(field).value = '';
+  } catch (error) { if (isCurrent()) showStatus('addStatus', employeeAuthErrorMessage(error), true); }
+  finally { actionBusy = false; }
 }
+async function searchEmployee() {
+  if (!adminIdentity) return;
+  const isCurrent = currentAdminView();
+  if (actionBusy) return;
+  const id = normalizeNumber(el('searchId').value);
+  el('searchResult').replaceChildren();
+  if (!/^[0-9]{1,30}$/.test(id)) return showStatus('searchStatus', 'اكتب الرقم الشخصي بالأرقام فقط.', true);
+  actionBusy = true;
+  showStatus('searchStatus', 'جاري البحث...');
+  try {
+    await requireAdmin();
+    const [profile, route, access] = await Promise.all([
+      getDocFromServer(doc(db, 'employees', id)), employeeAuth.readRoute(id), getDocFromServer(doc(db, 'employeeAccess', id))
+    ]);
+    if (!isCurrent()) return;
+    if (!profile.exists()) return showStatus('searchStatus', 'لا يوجد موظف بهذا الرقم.', true);
+    const data = profile.data();
+    const row = document.createElement('div'); row.className = 'emp-row';
+    const details = document.createElement('div');
+    const name = document.createElement('b'); name.textContent = data.name || '';
+    const number = document.createElement('div');
+    number.style.cssText = 'color:#6b7280;font-size:12px;';
+    number.textContent = 'رقم وظيفي: ' + (data.employeeNumber || '') + ' | هوية: ' + id;
+    const state = document.createElement('div');
+    state.textContent = !route || !access.exists() ? 'بيانات الدخول تحتاج تهيئة بواسطة مالك المشروع.' : route.enabled && access.data().active ? (route.state === 'pending' ? 'بانتظار أول دخول' : 'الدخول مفعل') : 'الدخول موقوف';
+    details.append(name, number, state); row.append(details);
+    if (route && access.exists()) {
+      const enabled = route.enabled && access.data().active;
+      const button = document.createElement('button');
+      button.className = enabled ? 'btn-del' : 'btn-add';
+      button.style.cssText = 'width:auto;margin:0;padding:8px 14px;';
+      button.textContent = 'إعادة تعيين';
+      button.onclick = () => resetEmployee(id);
+      row.append(button);
+    }
+    el('searchResult').replaceChildren(row);
+    showStatus('searchStatus', '');
+  } catch (error) { if (isCurrent()) showStatus('searchStatus', employeeAuthErrorMessage(error), true); }
+  finally { actionBusy = false; }
+}
+async function resetEmployee(id) {
+  if (!adminIdentity || actionBusy) return;
+  const isCurrent = currentAdminView();
+  if (!confirm('إعادة تعيين دخول الموظف؟ سيختار كلمة مرور جديدة، وسيبقى اسمه ورقمه وإفاداته محفوظة.')) return;
+  actionBusy = true;
+  showStatus('searchStatus', 'جاري إعادة التعيين...');
+  try {
+    await requireAdmin();
+    await employeeAuth.resetEmployee(id);
+    if (!isCurrent()) return;
+    showStatus('searchStatus', '✔ تمت إعادة التعيين. يمكن للموظف اختيار كلمة مرور جديدة عند الدخول.');
+    el('searchResult').replaceChildren();
+  } catch (error) {
+    if (isCurrent()) showStatus('searchStatus', employeeAuthErrorMessage(error) + ' إذا انقطعت العملية، اضغط إعادة تعيين مجدداً لإكمالها.', true);
+  } finally { actionBusy = false; }
+}
+Object.assign(window, { resetAdminRoute, lookupAdmin, loginAdmin, logoutAdmin, addEmployee, searchEmployee, resetEmployee });
+employeeAuth.watch(applyAdminIdentity, error => showStatus('pwStatus', employeeAuthErrorMessage(error), true));
 </script>
 </body>
 </html>

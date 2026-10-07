@@ -63,7 +63,7 @@
     display: flex; align-items: center; gap: 6px;
   }
   label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 5px; margin-top: 12px; font-weight: bold; }
-  input[type=text], input[type=number], select, textarea {
+  input[type=text], input[type=number], input[type=password], select, textarea {
     width: 100%; padding: 11px 12px; font-size: 16px; border: 1.5px solid #dfe3ea;
     border-radius: 10px; background: #f8f9fb; color: var(--text);
     transition: border-color .15s, background .15s;
@@ -129,10 +129,21 @@
   <h3>تسجيل الدخول</h3>
   <label>رقم الهوية الشخصية</label>
   <div class="idlookup">
-    <div><input type="text" id="nationalId" placeholder="اكتب رقم هويتك" inputmode="numeric" lang="en" onkeydown="if(event.key==='Enter')lookupEmployee()"></div>
-    <button type="button" onclick="lookupEmployee()">دخول</button>
+    <div><input type="text" id="nationalId" autocomplete="username" oninput="resetLoginRoute()" placeholder="اكتب رقم هويتك" inputmode="numeric" lang="en" onkeydown="if(event.key==='Enter')lookupEmployee()"></div>
+    <button type="button" id="lookupButton" onclick="lookupEmployee()">متابعة</button>
   </div>
-  <div id="lookupStatus"></div>
+  <div id="passwordArea" style="display:none;">
+    <label id="passwordLabel" for="employeePassword">كلمة المرور</label>
+    <input type="password" id="employeePassword" autocomplete="current-password" onkeydown="if(event.key==='Enter')submitEmployeeLogin()">
+    <div id="confirmPasswordArea" style="display:none;">
+      <label for="employeePasswordConfirm">تأكيد كلمة المرور</label>
+      <input type="password" id="employeePasswordConfirm" autocomplete="new-password" onkeydown="if(event.key==='Enter')submitEmployeeLogin()">
+    </div>
+    <p id="passwordHelp" style="font-size:12px;color:var(--muted);"></p>
+    <button class="logoutBtn" type="button" id="loginButton" onclick="submitEmployeeLogin()" style="margin-top:10px;">دخول</button>
+    <p style="font-size:12px;color:var(--muted);">نسيت كلمة المرور؟ اطلب من المسؤول إعادة تعيين الدخول. ستبقى إفاداتك السابقة محفوظة.</p>
+  </div>
+  <div id="lookupStatus" role="status" aria-live="polite"></div>
 </div>
 <p style="text-align:center; font-size:11px; color:var(--gold); margin-top:-6px;">Powered by Isa Bahar</p>
 
@@ -271,11 +282,13 @@
 </div>
 </div>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getFirestore, addDoc, collection, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { createEmployeeAuth, employeeAuthErrorMessage } from './employee-auth.js';
+
 const firebaseConfig = {
   apiKey: "AIzaSyCvQTWDDV-0f84fV36SPo6HIOOtmuYoyW0",
   authDomain: "dhl-customs-ifada.firebaseapp.com",
@@ -284,8 +297,16 @@ const firebaseConfig = {
   messagingSenderId: "707979991171",
   appId: "1:707979991171:web:afe423a95b356f882523b6"
 };
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const employeeAuth = createEmployeeAuth(app, db);
+let currentIdentity = null;
+let retainedIdentity = null; // Same-session draft owner, retained in memory only while locked.
+let loginRoute = null;
+let loginBusy = false;
+let signaturePadReady = false;
+let loginLookupVersion = 0;
+let viewVersion = 0;
 
 let uploadedImages = [];
 let currentSignature = null;
@@ -342,11 +363,14 @@ function clearSignature() {
 }
 
 function handleSignatureFile(event) {
+  const version = viewVersion;
+  if (!currentIdentity) return;
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
     normalizeImage(e.target.result).then(fixedSrc => {
+      if (version !== viewVersion || !(currentIdentity || retainedIdentity)) return;
       currentSignature = fixedSrc;
       document.getElementById('sigStatus').innerHTML = '<span class="ok">تم إرفاق صورة التوقيع ✓</span>';
     });
@@ -397,52 +421,149 @@ document.addEventListener('input', function (e) {
   }
 });
 
+function setLoginStatus(text, isError = false) {
+  const status = document.getElementById('lookupStatus');
+  status.textContent = text;
+  status.className = isError ? 'err' : '';
+}
+function setLoginBusy(value) {
+  loginBusy = value;
+  for (const id of ['lookupButton', 'loginButton', 'nationalId']) document.getElementById(id).disabled = value;
+}
+function resetLoginRoute() {
+  loginLookupVersion++;
+  loginRoute = null;
+  document.getElementById('passwordArea').style.display = 'none';
+  document.getElementById('employeePassword').value = '';
+  document.getElementById('employeePasswordConfirm').value = '';
+  setLoginStatus('');
+}
 async function lookupEmployee() {
-  const raw = document.getElementById('nationalId').value.trim();
-  const id = normalizeDigits(raw).replace(/[^0-9]/g, '');
+  if (loginBusy) return;
+  const id = normalizeDigits(document.getElementById('nationalId').value.trim());
   document.getElementById('nationalId').value = id;
-  const statusEl = document.getElementById('lookupStatus');
-  if (!id) {
-    statusEl.innerHTML = '<span class="err">اكتب رقم الهوية أولاً</span>';
+  resetLoginRoute();
+  const lookupVersion = loginLookupVersion;
+  setLoginBusy(true);
+  setLoginStatus('جاري التحقق...');
+  try {
+    const route = await employeeAuth.readRoute(id);
+    if (lookupVersion !== loginLookupVersion) return;
+    if (!route?.enabled) {
+      setLoginStatus(route ? 'تم إيقاف دخول هذا الرقم. تواصل مع المسؤول.' : 'الرقم غير مسجل. تواصل مع المسؤول.', true);
+      return;
+    }
+    loginRoute = route;
+    const first = route.state === 'pending';
+    document.getElementById('passwordArea').style.display = 'block';
+    document.getElementById('confirmPasswordArea').style.display = first ? 'block' : 'none';
+    document.getElementById('passwordLabel').textContent = first ? 'اختر كلمة مرور جديدة' : 'كلمة المرور';
+    document.getElementById('employeePassword').autocomplete = first ? 'new-password' : 'current-password';
+    document.getElementById('loginButton').textContent = first ? 'تعيين كلمة المرور والدخول' : 'دخول';
+    document.getElementById('passwordHelp').textContent = first ? 'هذا أول دخول. اختر كلمة مرور من 8 أحرف على الأقل واحتفظ بها للدخول من أي جهاز.' : 'أدخل كلمة المرور التي اخترتها لهذا الرقم.';
+    setLoginStatus('');
+    document.getElementById('employeePassword').focus();
+  } catch (error) { setLoginStatus(employeeAuthErrorMessage(error), true); }
+  finally { setLoginBusy(false); }
+}
+async function submitEmployeeLogin() {
+  if (loginBusy || !loginRoute) return;
+  const password = document.getElementById('employeePassword').value;
+  const first = loginRoute.state === 'pending';
+  if (!password || (first && password.length < 8)) return setLoginStatus('اكتب كلمة مرور من 8 أحرف على الأقل.', true);
+  if (first && password !== document.getElementById('employeePasswordConfirm').value) return setLoginStatus('كلمتا المرور غير متطابقتين.', true);
+  setLoginBusy(true);
+  setLoginStatus('جاري تسجيل الدخول...');
+  try {
+    const identity = await employeeAuth[first ? 'enroll' : 'login'](loginRoute.employeeId, password);
+    if (!identity.employeeId) throw Object.assign(new Error(), {code:'employee/access-denied'});
+    applyIdentity(identity);
+    document.getElementById('employeePassword').value = '';
+    document.getElementById('employeePasswordConfirm').value = '';
+  } catch (error) { setLoginStatus(employeeAuthErrorMessage(error), true); }
+  finally { setLoginBusy(false); }
+}
+function lockSessionView(metadata = {}) {
+  const owner = currentIdentity || retainedIdentity;
+  // A known different Auth UID is a confirmed account change, not a retry.
+  if (owner && metadata.uid && owner.uid !== metadata.uid) {
+    clearSessionView();
     return;
   }
-  statusEl.textContent = 'جاري البحث...';
-  try {
-    const doc = await db.collection('employees').doc(id).get();
-    if (doc.exists) {
-      const data = doc.data();
-      document.getElementById('empName').value = data.name || '';
-      statusEl.innerHTML = '<span class="ok">تم تسجيل الدخول ✓</span>';
-      document.getElementById('welcomeMsg').textContent = 'مرحباً، ' + (data.name || '');
-      document.getElementById('loginCard').style.display = 'none';
-      document.getElementById('formArea').style.display = 'block';
-      initSignaturePad();
-    } else {
-      document.getElementById('empName').value = '';
-      statusEl.innerHTML = '<span class="err">الرقم غير مسجل، تأكد منه أو تواصل مع المسؤول</span>';
-    }
-  } catch (e) {
-    statusEl.innerHTML = '<span class="err">خطأ بالاتصال: ' + e.message + '</span>';
+  retainedIdentity = owner;
+  currentIdentity = null;
+  document.getElementById('formArea').style.display = 'none';
+  document.getElementById('loginCard').style.display = 'block';
+  document.querySelectorAll('[data-ifada-preview]').forEach(overlay => {
+    overlay.style.display = 'none';
+    const share = overlay.querySelector('#sharePreviewBtn');
+    if (share) share.disabled = true;
+  });
+  if (retainedIdentity) setLoginStatus('الدخول مقفل مؤقتاً لحين التحقق من الاتصال. بيانات الإفادة غير المحفوظة باقية في هذه الصفحة لنفس الحساب.');
+}
+function applyIdentity(identity, metadata = {}) {
+  if (!identity?.employeeId) {
+    if (metadata.status === 'locked') lockSessionView(metadata);
+    else if (currentIdentity || retainedIdentity) clearSessionView();
+    return;
   }
+  const previous = currentIdentity || retainedIdentity;
+  const changed = !previous || previous.uid !== identity.uid || previous.generation !== identity.generation;
+  if (changed && previous) clearSessionView();
+  if (changed) viewVersion++;
+  currentIdentity = identity;
+  retainedIdentity = null;
+  document.getElementById('nationalId').value = identity.employeeId;
+  document.getElementById('empName').value = identity.profile.name || '';
+  document.getElementById('welcomeMsg').textContent = 'مرحباً، ' + (identity.profile.name || '');
+  document.getElementById('loginCard').style.display = 'none';
+  document.getElementById('formArea').style.display = 'block';
+  document.querySelectorAll('[data-ifada-preview]').forEach(overlay => {
+    overlay.style.display = 'flex';
+    const share = overlay.querySelector('#sharePreviewBtn');
+    if (share) share.disabled = false;
+  });
+  if (!signaturePadReady) { initSignaturePad(); signaturePadReady = true; }
 }
 
-function logout() {
+function clearSessionView() {
+  viewVersion++;
+  currentIdentity = null;
+  retainedIdentity = null;
   document.getElementById('formArea').style.display = 'none';
   document.getElementById('loginCard').style.display = 'block';
   document.getElementById('nationalId').value = '';
   document.getElementById('empName').value = '';
-  document.getElementById('lookupStatus').textContent = '';
+  resetLoginRoute();
+  if (signaturePadReady) clearSignature();
   currentSignature = null;
   uploadedImages = [];
   renderImgList();
+  for (const input of document.querySelectorAll('#formArea input, #formArea textarea, #formArea select')) {
+    if (['checkbox', 'radio'].includes(input.type)) input.checked = input.defaultChecked;
+    else if (input.tagName === 'SELECT') input.selectedIndex = 0;
+    else input.value = '';
+  }
+  toggleShipmentType();
+  document.getElementById('regakuBox').style.display = 'none';
+  document.getElementById('k9Box').style.display = 'none';
+  document.querySelectorAll('[data-ifada-preview]').forEach(overlay => overlay.querySelector('#closePreviewBtn')?.click());
+}
+async function logout() {
+  clearSessionView();
+  try { await employeeAuth.logout(); }
+  catch (error) { setLoginStatus(employeeAuthErrorMessage(error), true); }
 }
 
 function handlePhotos(event) {
+  const version = viewVersion;
+  if (!currentIdentity) return;
   const files = Array.from(event.target.files);
   files.forEach(file => {
     const reader = new FileReader();
     reader.onload = e => {
       normalizeImage(e.target.result).then(fixedSrc => {
+        if (version !== viewVersion || !(currentIdentity || retainedIdentity)) return;
         uploadedImages.push(fixedSrc);
         renderImgList();
       });
@@ -513,6 +634,8 @@ function todayArabicDateTime() {
 }
 
 function buildTemplate(data, dt) {
+  data = { ...data }; // Render a safe copy; form values must never become live markup.
+  const escapeText = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   // Fix for a html2canvas Arabic-shaping bug: a digit directly touching an
   // Arabic letter (e.g. "10كلغ") can render corrupted. Force a thin space
   // between any digit run and adjacent Arabic letters before rendering.
@@ -521,6 +644,11 @@ function buildTemplate(data, dt) {
     .replace(/([\u0600-\u06FF])([0-9]+)/g, '$1 $2');
   ['openingDetails', 'awb', 'importer', 'fromCountry', 'toCountry', 'regakuResult', 'k9EmployeeName', 'k9DogName']
     .forEach(k => { if (data[k]) data[k] = fixDigitLetterSpacing(data[k]); });
+
+  for (const key of Object.keys(data)) {
+    if (typeof data[key] === 'string' && key !== 'signature') data[key] = escapeText(data[key]);
+  }
+  if (data.signature && !/^data:image\/(?:png|jpeg);base64,[a-zA-Z0-9+/=]+$/.test(data.signature)) data.signature = null;
 
   let regakuLine = '';
   if (data.regakuCheck) {
@@ -602,8 +730,8 @@ function buildTemplate(data, dt) {
 function collectFormData() {
   const g = id => normalizeDigits(document.getElementById(id).value.trim());
   return {
-    nationalId: g('nationalId'),
-    empName: g('empName'),
+    nationalId: currentIdentity?.employeeId || '',
+    empName: currentIdentity?.profile.name || '',
     empJob: g('empJob'),
     empPhone: g('empPhone'),
     awb: g('awb'),
@@ -641,6 +769,12 @@ function validateFormData(data) {
 async function generatePdf() {
   const btn = document.getElementById('generateBtn');
   const statusMsg = document.getElementById('statusMsg');
+  if (btn.disabled) return;
+  if (!currentIdentity) return setLoginStatus('سجل الدخول أولاً.', true);
+  const generatingIdentity = { ...currentIdentity };
+  const generatingViewVersion = viewVersion;
+  const generatingImages = uploadedImages.slice();
+  let pdfUrl = null;
   const data = collectFormData();
   data.signature = captureCanvasSignature() || currentSignature || null;
 
@@ -663,6 +797,8 @@ async function generatePdf() {
   document.body.appendChild(holder);
 
   try {
+    const verified = await employeeAuth.restore();
+    if (!verified || verified.uid !== generatingIdentity.uid || verified.generation !== generatingIdentity.generation) throw Object.assign(new Error(), {code:'employee/access-denied'});
     const imgs = holder.querySelectorAll('img');
     await Promise.all(Array.from(imgs).map(im => im.complete ? Promise.resolve() : new Promise(res => { im.onload = res; im.onerror = res; })));
     if (document.fonts) {
@@ -681,7 +817,7 @@ async function generatePdf() {
     const imgHeight = (imgProps.h * pageWidth) / imgProps.w;
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageWidth, Math.min(imgHeight, pageHeight));
 
-    for (const imgSrc of uploadedImages) {
+    for (const imgSrc of generatingImages) {
       pdf.addPage();
       const img = await loadImage(imgSrc);
       const ratio = Math.min((pageWidth - 20) / img.width, (pageHeight - 20) / img.height);
@@ -695,25 +831,35 @@ async function generatePdf() {
     const fileName = `ifada_P${data.pNumber || 'draft'}.pdf`;
     const pdfBlob = pdf.output('blob');
     const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
-    const pdfUrl = URL.createObjectURL(pdfBlob);
+    pdfUrl = URL.createObjectURL(pdfBlob);
 
-    await db.collection('ifadat').add({
+    const verifiedBeforeSave = await employeeAuth.restore();
+    if (!verifiedBeforeSave || verifiedBeforeSave.uid !== generatingIdentity.uid || verifiedBeforeSave.generation !== generatingIdentity.generation) throw Object.assign(new Error(), {code:'employee/access-denied'});
+    await addDoc(collection(db, 'ifadat'), {
       ...data,
       createdAtText: dt.text,
       createdAtIso: dt.iso,
-      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+      createdByUid: generatingIdentity.uid,
+      createdByGeneration: generatingIdentity.generation,
+      section: generatingIdentity.profile.section || 'dhl',
+      timestamp: serverTimestamp()
     });
 
+    if (viewVersion !== generatingViewVersion || currentIdentity?.uid !== generatingIdentity.uid) throw Object.assign(new Error(), {code:'employee/access-denied'});
     showPreview(pdfUrl, pdfFile, pdf, fileName);
     statusMsg.innerHTML = '<span class="ok">تم توليد الإفادة ✓ راجعها قبل الإرسال</span>';
   } catch (e) {
-    statusMsg.innerHTML = '<span class="fieldErr">حدث خطأ: ' + e.message + '</span>';
+    statusMsg.textContent = e.code ? employeeAuthErrorMessage(e) : 'تعذر توليد الإفادة أو حفظها. حاول مجدداً.';
+    statusMsg.className = 'fieldErr';
+    if (holder.isConnected) holder.remove();
+    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
   }
   btn.disabled = false;
 }
 
 function showPreview(pdfUrl, pdfFile, pdf, fileName) {
   const overlay = document.createElement('div');
+  overlay.dataset.ifadaPreview = 'true';
   overlay.style.cssText = 'position:fixed; inset:0; background:#000; z-index:999; display:flex; flex-direction:column;';
   overlay.innerHTML = `
     <div style="background:var(--navy); padding:12px 16px; display:flex; justify-content:space-between; align-items:center;">
@@ -731,7 +877,9 @@ function showPreview(pdfUrl, pdfFile, pdf, fileName) {
     document.body.removeChild(overlay);
     URL.revokeObjectURL(pdfUrl);
   };
+  const previewViewVersion = viewVersion;
   document.getElementById('sharePreviewBtn').onclick = async () => {
+    if (!currentIdentity || previewViewVersion !== viewVersion) return;
     if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
       try {
         await navigator.share({ files: [pdfFile] });
@@ -755,7 +903,12 @@ function loadImage(src) {
     img.src = src;
   });
 }
+// Module declarations are not globals; preserve every existing inline handler.
+Object.assign(window, { normalizeDigits, toggleShipmentType, lookupEmployee, submitEmployeeLogin,
+  resetLoginRoute, logout, clearSignature, handleSignatureFile, handlePhotos, removeImg, generatePdf });
+employeeAuth.watch(applyIdentity, error => setLoginStatus(employeeAuthErrorMessage(error) + (retainedIdentity ? ' بيانات الإفادة غير المحفوظة باقية في هذه الصفحة حتى التحقق من نفس الحساب.' : ''), true));
 </script>
 
 </body>
 </html>
+
