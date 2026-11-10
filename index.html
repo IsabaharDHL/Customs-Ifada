@@ -269,6 +269,16 @@
 </div>
 
 <div class="card">
+  <h3>مستندات الإفادة</h3>
+  <label for="waybill">بوليصة الشحن</label>
+  <input type="file" id="waybill" accept="image/*" capture="environment" onchange="handleDocument(event)">
+  <div id="waybillPreview"></div>
+  <label for="custodyReceipt">وصل الأمانة</label>
+  <input type="file" id="custodyReceipt" accept="image/*" capture="environment" onchange="handleDocument(event)">
+  <div id="custodyReceiptPreview"></div>
+</div>
+
+<div class="card">
   <h3>صور الأدلة</h3>
   <input type="file" id="photoInput" accept="image/*" multiple onchange="handlePhotos(event)">
   <div id="imgList"></div>
@@ -309,6 +319,7 @@ let loginLookupVersion = 0;
 let viewVersion = 0;
 
 let uploadedImages = [];
+const documentImages = new Map();
 let currentSignature = null;
 let sigCtx, sigDrawing = false, sigLastX = 0, sigLastY = 0;
 
@@ -538,6 +549,10 @@ function clearSessionView() {
   if (signaturePadReady) clearSignature();
   currentSignature = null;
   uploadedImages = [];
+  documentImages.clear();
+  for (const id of ['waybill', 'custodyReceipt']) {
+    document.getElementById(id + 'Preview').replaceChildren();
+  }
   renderImgList();
   for (const input of document.querySelectorAll('#formArea input, #formArea textarea, #formArea select')) {
     if (['checkbox', 'radio'].includes(input.type)) input.checked = input.defaultChecked;
@@ -553,6 +568,78 @@ async function logout() {
   clearSessionView();
   try { await employeeAuth.logout(); }
   catch (error) { setLoginStatus(employeeAuthErrorMessage(error), true); }
+}
+
+async function handleDocument(event) {
+  if (!currentIdentity) return;
+  const input = event.target;
+  const preview = document.getElementById(input.id + 'Preview');
+  const file = input.files[0];
+  const previous = documentImages.get(input.id)?.src;
+  if (!file) return;
+  const entry = { src: previous, pending: true };
+  documentImages.set(input.id, entry);
+  preview.textContent = 'جاري فحص المستند…';
+  const url = URL.createObjectURL(file);
+  try {
+    const src = await normalizeImage(url, true);
+    if (documentImages.get(input.id) !== entry) return;
+    entry.src = src;
+    const image = document.createElement('img');
+    image.src = src;
+    image.alt = input.labels[0].textContent;
+    image.style.maxWidth = '140px';
+    preview.replaceChildren(image);
+  } catch {
+    if (documentImages.get(input.id) !== entry) return;
+    preview.textContent = previous ? 'تعذرت قراءة الصورة. بقي المستند السابق مرفقًا.' : 'تعذرت قراءة الصورة. جرّب تصويرها من جديد.';
+  } finally {
+    entry.pending = false;
+    URL.revokeObjectURL(url);
+    if (documentImages.get(input.id) === entry) input.value = '';
+  }
+}
+
+function improveDocument(imageData) {
+  const { data, width, height } = imageData;
+  const tileSize = Math.max(12, Math.round(Math.min(width, height) / 24));
+  const columns = Math.ceil(width / tileSize);
+  const rows = Math.ceil(height / tileSize);
+  const paper = new Float32Array(columns * rows);
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const samples = [];
+      for (let y = row * tileSize; y < Math.min(height, (row + 1) * tileSize); y += 3) {
+        for (let x = column * tileSize; x < Math.min(width, (column + 1) * tileSize); x += 3) {
+          const i = (y * width + x) * 4;
+          samples.push((data[i] * 54 + data[i + 1] * 183 + data[i + 2] * 19) / 256);
+        }
+      }
+      samples.sort((a, b) => a - b);
+      paper[row * columns + column] = samples[Math.floor(samples.length * 0.85)];
+    }
+  }
+  const levels = Array.from(paper).sort((a, b) => a - b);
+  const reference = levels[Math.floor(levels.length * 0.85)];
+  if (reference - levels[Math.floor(levels.length * 0.15)] < 24) return false;
+
+  for (let y = 0; y < height; y++) {
+    const row = Math.min(rows - 1, Math.max(0, y / tileSize - 0.5));
+    const top = Math.floor(row);
+    const bottom = Math.min(top + 1, rows - 1);
+    for (let x = 0; x < width; x++) {
+      const column = Math.min(columns - 1, Math.max(0, x / tileSize - 0.5));
+      const left = Math.floor(column);
+      const right = Math.min(left + 1, columns - 1);
+      const upper = paper[top * columns + left] * (1 - column + left) + paper[top * columns + right] * (column - left);
+      const lower = paper[bottom * columns + left] * (1 - column + left) + paper[bottom * columns + right] * (column - left);
+      const background = upper * (1 - row + top) + lower * (row - top);
+      const gain = Math.max(1, Math.min(1.8, reference / Math.max(1, background + 4)));
+      const i = (y * width + x) * 4;
+      for (let channel = 0; channel < 3; channel++) data[i + channel] *= gain;
+    }
+  }
+  return true;
 }
 
 function handlePhotos(event) {
@@ -576,7 +663,7 @@ function handlePhotos(event) {
 // Redraws the photo onto a canvas at its natural decoded size so the
 // orientation the browser already applied gets baked into the pixels,
 // preventing the rotated/squeezed look when the file is later embedded in the PDF.
-function normalizeImage(src) {
+function normalizeImage(src, cleanDocument = false) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -593,7 +680,15 @@ function normalizeImage(src) {
       canvas.height = h;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
-      resolve(canvas.toDataURL('image/jpeg', 0.85));
+      try {
+        if (cleanDocument) {
+          const pixels = ctx.getImageData(0, 0, w, h);
+          if (improveDocument(pixels)) ctx.putImageData(pixels, 0, 0);
+        }
+        resolve(canvas.toDataURL('image/jpeg', cleanDocument ? 0.95 : 0.85));
+      } catch (error) {
+        reject(error);
+      }
     };
     img.onerror = reject;
     img.src = src;
@@ -773,7 +868,12 @@ async function generatePdf() {
   if (!currentIdentity) return setLoginStatus('سجل الدخول أولاً.', true);
   const generatingIdentity = { ...currentIdentity };
   const generatingViewVersion = viewVersion;
-  const generatingImages = uploadedImages.slice();
+  const documents = ['waybill', 'custodyReceipt'].map(id => documentImages.get(id));
+  if (documents.some(document => document?.pending)) {
+    statusMsg.textContent = 'انتظر حتى ينتهي فحص المستند.';
+    return;
+  }
+  const generatingImages = [...documents.map(document => document?.src).filter(Boolean), ...uploadedImages];
   let pdfUrl = null;
   const data = collectFormData();
   data.signature = captureCanvasSignature() || currentSignature || null;
@@ -905,7 +1005,7 @@ function loadImage(src) {
 }
 // Module declarations are not globals; preserve every existing inline handler.
 Object.assign(window, { normalizeDigits, toggleShipmentType, lookupEmployee, submitEmployeeLogin,
-  resetLoginRoute, logout, clearSignature, handleSignatureFile, handlePhotos, removeImg, generatePdf });
+  resetLoginRoute, logout, clearSignature, handleSignatureFile, handleDocument, handlePhotos, removeImg, generatePdf });
 employeeAuth.watch(applyIdentity, error => setLoginStatus(employeeAuthErrorMessage(error) + (retainedIdentity ? ' بيانات الإفادة غير المحفوظة باقية في هذه الصفحة حتى التحقق من نفس الحساب.' : ''), true));
 </script>
 
