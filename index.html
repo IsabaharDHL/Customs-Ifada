@@ -95,7 +95,10 @@
   .scan-panel label { color: var(--navy); }
   .scan-panel img, .scan-panel canvas { display: block; max-width: 100%; max-height: 420px; margin: 8px auto; }
   .scan-panel [hidden], #sigPreview[hidden] { display: none; }
-  .scan-panel canvas { cursor: crosshair; }
+  .scan-panel [data-corners] { cursor: crosshair; }
+  .scan-tilt input { display: block; width: 100%; accent-color: var(--navy); }
+  .scan-tilt label { margin-top: 6px; }
+  .scan-tilt output { direction: ltr; unicode-bidi: isolate; }
   .scan-panel [role=status] { font-size: 12px; margin: 6px 0; }
   .scan-panel button { margin: 3px; padding: 7px; }
   #sigPreview { display: block; max-width: 100%; max-height: 72px; margin-top: 8px; }
@@ -283,8 +286,13 @@
     <label for="waybillCamera">بوليصة الشحن</label>
     <input id="waybillCamera" type="file" accept="image/*" capture="environment" aria-label="تصوير بوليصة الشحن">
     <p role="status"></p>
-    <img alt="معاينة بوليصة الشحن" hidden>
-    <canvas aria-label="تحديد زوايا بوليصة الشحن" hidden></canvas>
+    <canvas data-preview role="img" aria-label="معاينة بوليصة الشحن" hidden></canvas>
+    <div class="scan-tilt" data-tilt hidden>
+      <label for="waybillTilt">تعديل الميلان <output for="waybillTilt" dir="ltr">0°</output></label>
+      <input id="waybillTilt" type="range" min="-20" max="20" step="0.5" value="0" dir="ltr">
+      <button type="button" data-auto>رجوع للتصحيح التلقائي</button>
+    </div>
+    <canvas data-corners aria-label="تحديد زوايا بوليصة الشحن" hidden></canvas>
     <button type="button" data-edit hidden>تعديل الزوايا</button>
     <button type="button" data-cancel hidden>إلغاء تعديل الزوايا</button>
     <button type="button" data-remove hidden>حذف المستند</button>
@@ -293,8 +301,13 @@
     <label for="receiptCamera">وصل الأمانة</label>
     <input id="receiptCamera" type="file" accept="image/*" capture="environment" aria-label="تصوير وصل الأمانة">
     <p role="status"></p>
-    <img alt="معاينة وصل الأمانة" hidden>
-    <canvas aria-label="تحديد زوايا وصل الأمانة" hidden></canvas>
+    <canvas data-preview role="img" aria-label="معاينة وصل الأمانة" hidden></canvas>
+    <div class="scan-tilt" data-tilt hidden>
+      <label for="receiptTilt">تعديل الميلان <output for="receiptTilt" dir="ltr">0°</output></label>
+      <input id="receiptTilt" type="range" min="-20" max="20" step="0.5" value="0" dir="ltr">
+      <button type="button" data-auto>رجوع للتصحيح التلقائي</button>
+    </div>
+    <canvas data-corners aria-label="تحديد زوايا وصل الأمانة" hidden></canvas>
     <button type="button" data-edit hidden>تعديل الزوايا</button>
     <button type="button" data-cancel hidden>إلغاء تعديل الزوايا</button>
     <button type="button" data-remove hidden>حذف المستند</button>
@@ -348,10 +361,11 @@ let sigCtx, sigDrawing = false, sigLastX = 0, sigLastY = 0;
 const scanSlots = ['waybill', 'receipt'].map(id => {
   const panel = document.getElementById(id);
   return {
-    panel, source: null, result: null, points: [], version: 0, busy: false, editing: false,
+    panel, source: null, result: null, angle: 0, autoPoints: null, appliedPoints: null, points: [], version: 0, busy: false, editing: false,
     status: panel.querySelector('[role=status]'),
-    preview: panel.querySelector('img'),
-    editor: panel.querySelector('canvas')
+    preview: panel.querySelector('[data-preview]'),
+    tilt: panel.querySelector('[data-tilt]'),
+    editor: panel.querySelector('[data-corners]')
   };
 });
 let signatureVersion = 0;
@@ -580,10 +594,39 @@ function cleanPaper(canvas) {
   ctx.putImageData(image, 0, 0);
 }
 
+function drawRotatedPage(target, page, angle, maxSide = Infinity) {
+  const radians = angle * Math.PI / 180;
+  const cos = Math.abs(Math.cos(radians));
+  const sin = Math.abs(Math.sin(radians));
+  const width = page.width * cos + page.height * sin;
+  const height = page.width * sin + page.height * cos;
+  const scale = Math.min(1, maxSide / Math.max(width, height));
+  // Expand the canvas so the corners and any writing along the edges stay visible.
+  target.width = Math.ceil(width * scale);
+  target.height = Math.ceil(height * scale);
+  const ctx = target.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, target.width, target.height);
+  ctx.translate(target.width / 2, target.height / 2);
+  ctx.rotate(radians);
+  const drawWidth = page.width * scale, drawHeight = page.height * scale;
+  ctx.drawImage(page, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+}
+
+function updateTiltPreview(slot) {
+  slot.tilt.querySelector('input').value = slot.angle;
+  slot.tilt.querySelector('output').textContent = slot.angle + '°';
+  const auto = slot.tilt.querySelector('[data-auto]');
+  auto.textContent = slot.autoPoints ? 'رجوع للتصحيح التلقائي' : 'إلغاء تعديل الميلان';
+  auto.disabled = slot.angle === 0 && (!slot.autoPoints || slot.appliedPoints === slot.autoPoints);
+  drawRotatedPage(slot.preview, slot.result, slot.angle, 600);
+}
+
 function renderScan(slot) {
   slot.preview.hidden = !slot.result || slot.editing;
-  if (slot.result) slot.preview.src = slot.result;
-  else slot.preview.removeAttribute('src');
+  slot.tilt.hidden = slot.preview.hidden || slot.busy;
+  if (!slot.preview.hidden) updateTiltPreview(slot);
+  else slot.preview.width = slot.preview.height = 1;
   slot.editor.hidden = !slot.editing;
   slot.panel.querySelector('[data-edit]').hidden = !slot.source || slot.editing;
   slot.panel.querySelector('[data-remove]').hidden = !slot.source && !slot.busy;
@@ -613,7 +656,9 @@ function renderScan(slot) {
 function finishScan(slot, points) {
   const page = straightenPaper(slot.source, points);
   cleanPaper(page);
-  slot.result = page.toDataURL('image/jpeg', 0.94);
+  slot.result = page;
+  slot.appliedPoints = points;
+  slot.angle = 0;
   slot.editing = false;
   slot.status.textContent = 'المستند جاهز. راجع المعاينة.';
   renderScan(slot);
@@ -629,6 +674,8 @@ function startCornerSelection(slot) {
 function clearScan(slot) {
   slot.version++;
   slot.source = slot.result = null;
+  slot.autoPoints = slot.appliedPoints = null;
+  slot.angle = 0;
   slot.points = [];
   slot.busy = slot.editing = false;
   slot.status.textContent = '';
@@ -636,7 +683,7 @@ function clearScan(slot) {
 }
 
 for (const slot of scanSlots) {
-  slot.panel.querySelector('input').addEventListener('change', async event => {
+  slot.panel.querySelector('input[type=file]').addEventListener('change', async event => {
     const file = event.target.files[0];
     event.target.value = '';
     if (!file || !currentIdentity) return;
@@ -651,7 +698,9 @@ for (const slot of scanSlots) {
       slot.source = source;
       slot.result = null;
       const points = detectPaper(source);
-      if (points.length) finishScan(slot, points);
+      slot.autoPoints = points.length ? points : null;
+      slot.appliedPoints = null;
+      if (slot.autoPoints) finishScan(slot, slot.autoPoints);
       else startCornerSelection(slot);
     } catch {
       if (version !== slot.version || ownerVersion !== viewVersion) return;
@@ -666,6 +715,20 @@ for (const slot of scanSlots) {
       }
     }
   });
+  slot.tilt.querySelector('input').addEventListener('input', event => {
+    if (slot.tilt.hidden || !currentIdentity) return;
+    slot.angle = Number(event.target.value);
+    updateTiltPreview(slot);
+  });
+  slot.tilt.querySelector('[data-auto]').onclick = () => {
+    if (slot.tilt.hidden || !currentIdentity) return;
+    if (slot.autoPoints && slot.appliedPoints !== slot.autoPoints) {
+      finishScan(slot, slot.autoPoints);
+      return;
+    }
+    slot.angle = 0;
+    updateTiltPreview(slot);
+  };
   slot.panel.querySelector('[data-edit]').onclick = () => startCornerSelection(slot);
   slot.panel.querySelector('[data-remove]').onclick = () => clearScan(slot);
   slot.panel.querySelector('[data-cancel]').onclick = () => {
@@ -1179,7 +1242,8 @@ async function generatePdf() {
     statusMsg.textContent = 'انتظر معالجة الصورة أو أكمل تحديد زوايا المستند قبل التوليد.';
     return;
   }
-  const generatingDocuments = scanSlots.map(slot => slot.result).filter(Boolean);
+  const generatingDocuments = scanSlots.filter(slot => slot.result)
+    .map(slot => ({ page: slot.result, angle: slot.angle }));
   const generatingImages = uploadedImages.slice();
   let pdfUrl = null;
   const data = collectFormData();
@@ -1224,7 +1288,13 @@ async function generatePdf() {
     const imgHeight = (imgProps.h * pageWidth) / imgProps.w;
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageWidth, Math.min(imgHeight, pageHeight));
 
-    for (const imgSrc of [...generatingDocuments, ...generatingImages]) {
+    const documentImages = generatingDocuments.map(({ page, angle }) => {
+      if (!angle) return page.toDataURL('image/jpeg', 0.94);
+      const rotated = document.createElement('canvas');
+      drawRotatedPage(rotated, page, angle);
+      return rotated.toDataURL('image/jpeg', 0.94);
+    });
+    for (const imgSrc of [...documentImages, ...generatingImages]) {
       pdf.addPage();
       const img = await loadImage(imgSrc);
       const ratio = Math.min((pageWidth - 20) / img.width, (pageHeight - 20) / img.height);
