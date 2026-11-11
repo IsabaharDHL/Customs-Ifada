@@ -197,6 +197,8 @@
       <label for="awb">رقم بوليصة الشحن</label>
       <input type="text" id="awb" dir="ltr" maxlength="500">
       <button type="button" id="awbScanButton" class="awb-scan-button" aria-controls="awbScanner" aria-expanded="false">قراءة الباركود</button>
+      <button type="button" id="awbPhotoButton" class="awb-scan-button">قراءة من صورة</button>
+      <input type="file" id="awbPhoto" accept="image/*" capture="environment" hidden>
     </div>
     <div>
       <label>اسم المستورد</label>
@@ -879,6 +881,8 @@ const awbScanner = document.getElementById('awbScanner');
 const awbVideo = document.getElementById('awbVideo');
 const awbScanButton = document.getElementById('awbScanButton');
 const awbScanStatus = document.getElementById('awbScanStatus');
+const awbPhoto = document.getElementById('awbPhoto');
+let awbPhotoVersion = 0;
 let awbScan = null;
 let awbDecoderLoading = null;
 
@@ -887,9 +891,7 @@ function loadAwbDecoder() {
   if (!awbDecoderLoading) {
     awbDecoderLoading = new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
-      script.integrity = 'sha384-BzBxP10ZE72aitqj5UMmUsbKFliP/DZqA8Wq+BNNhlIJDGoEd1tpkMYXOg9+n6sB';
-      script.crossOrigin = 'anonymous';
+      script.src = './vendor/zxing-0.21.3.min.js';
       const fail = () => {
         clearTimeout(timeout);
         script.remove();
@@ -921,7 +923,25 @@ function makeAwbReader(zxing) {
   return reader;
 }
 
+function readAwbBarcode(zxing, reader, canvas) {
+  const source = new zxing.HTMLCanvasElementLuminanceSource(canvas);
+  const bitmap = new zxing.BinaryBitmap(new zxing.HybridBinarizer(source));
+  const value = normalizeDigits(reader.decodeWithState(bitmap).getText().trim());
+  return value && value.length <= 500 && !/[\x00-\x1f\x7f]/.test(value) ? value : null;
+}
+
+function isAwbReadError(zxing, error) {
+  return zxing && (error instanceof zxing.NotFoundException ||
+    error instanceof zxing.ChecksumException || error instanceof zxing.FormatException);
+}
+
+function acceptAwbBarcode(value) {
+  document.getElementById('awb').value = value;
+  stopAwbScan('تمت قراءة الباركود. تأكد من رقم البوليصة في الخانة.');
+}
+
 function stopAwbScan(message = '') {
+  awbPhotoVersion++;
   const scan = awbScan;
   awbScan = null;
   if (scan) {
@@ -939,9 +959,10 @@ function stopAwbScan(message = '') {
 async function startAwbScan() {
   if (!currentIdentity || awbScan) return;
   if (!navigator.mediaDevices?.getUserMedia) {
-    awbScanStatus.textContent = 'الكاميرا غير متاحة في هذا المتصفح. اكتب رقم البوليصة يدويًا.';
+    awbScanStatus.textContent = 'الكاميرا المباشرة غير متاحة. جرّب «قراءة من صورة».';
     return;
   }
+  awbPhotoVersion++;
   const scan = { stream: null, timer: null };
   awbScan = scan;
   awbScanButton.disabled = true;
@@ -965,8 +986,8 @@ async function startAwbScan() {
   } catch (error) {
     if (awbScan === scan) {
       stopAwbScan(error.name === 'NotAllowedError'
-        ? 'اسمح باستخدام الكاميرا من إعدادات المتصفح أو اكتب الرقم يدويًا.'
-        : 'تعذر تشغيل قارئ الباركود. جرّب مرة ثانية أو اكتب الرقم يدويًا.');
+        ? 'اسمح بالكاميرا من إعدادات المتصفح أو جرّب «قراءة من صورة».'
+        : 'تعذر تشغيل الكاميرا المباشرة. جرّب «قراءة من صورة».');
     }
     return;
   }
@@ -989,15 +1010,10 @@ async function startAwbScan() {
           frame.height = height;
         }
         ctx.drawImage(awbVideo, 0, 0, width, height);
-        const bitmap = new zxing.BinaryBitmap(new zxing.HybridBinarizer(new zxing.HTMLCanvasElementLuminanceSource(frame)));
-        const value = normalizeDigits(reader.decodeWithState(bitmap).getText().trim());
-        if (value && value.length <= 500 && !/[\x00-\x1f\x7f]/.test(value)) {
-          document.getElementById('awb').value = value;
-          stopAwbScan('تمت قراءة الباركود. تأكد من رقم البوليصة في الخانة.');
-          return;
-        }
+        const value = readAwbBarcode(zxing, reader, frame);
+        if (value) return acceptAwbBarcode(value);
       } catch (error) {
-        if (!(error instanceof zxing.NotFoundException) && !(error instanceof zxing.ChecksumException) && !(error instanceof zxing.FormatException)) {
+        if (!isAwbReadError(zxing, error)) {
           stopAwbScan('توقف قارئ الباركود. جرّب مرة ثانية أو اكتب الرقم يدويًا.');
           return;
         }
@@ -1007,6 +1023,31 @@ async function startAwbScan() {
   }
   scanFrame();
 }
+
+document.getElementById('awbPhotoButton').addEventListener('click', () => {
+  if (!currentIdentity) return;
+  stopAwbScan();
+  awbPhoto.click();
+});
+awbPhoto.addEventListener('change', async () => {
+  const file = awbPhoto.files[0];
+  awbPhoto.value = '';
+  if (!file || !currentIdentity) return;
+  const version = ++awbPhotoVersion;
+  awbScanStatus.textContent = 'جاري قراءة الباركود من الصورة…';
+  try {
+    const [zxing, canvas] = await Promise.all([loadAwbDecoder(), photoCanvas(file, 2200)]);
+    if (version !== awbPhotoVersion || !currentIdentity) return;
+    const value = readAwbBarcode(zxing, makeAwbReader(zxing), canvas);
+    if (value) return acceptAwbBarcode(value);
+    awbScanStatus.textContent = 'لم يظهر رقم صالح في الباركود. صوّر باركود البوليصة عن قرب.';
+  } catch (error) {
+    if (version !== awbPhotoVersion || !currentIdentity) return;
+    awbScanStatus.textContent = isAwbReadError(window.ZXing, error)
+      ? 'ما قدرت أقرأ الباركود. صوّره عن قرب وخله واضح بالكامل.'
+      : 'تعذر قراءة الصورة. جرّب صورة ثانية أو اكتب الرقم يدويًا.';
+  }
+});
 
 awbScanButton.addEventListener('click', startAwbScan);
 document.getElementById('awbCloseScanner').addEventListener('click', () => stopAwbScan());
