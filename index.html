@@ -91,6 +91,11 @@
     width: 20px; height: 20px; border-radius: 50%; font-size: 12px; text-align: center;
     line-height: 20px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3);
   }
+  .awb-scan-button { margin-top: 7px; padding: 7px 10px; border: 1px solid #dfe3ea; border-radius: 8px; background: #fff; color: var(--navy); font: inherit; font-size: 12px; }
+  #awbScanner { margin-top: 12px; }
+  #awbVideo { display: block; width: 100%; max-height: 280px; background: #0e1a38; border-radius: 10px; }
+  #awbScanStatus { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+  #awbScanStatus:empty { margin: 0; }
   .scan-panel + .scan-panel { margin-top: 16px; }
   .scan-panel label { color: var(--navy); }
   .scan-panel img, .scan-panel canvas { display: block; max-width: 100%; max-height: 420px; margin: 8px auto; }
@@ -189,8 +194,9 @@
   <h3>تفاصيل الضبط</h3>
   <div class="row2">
     <div>
-      <label>رقم بوليصة الشحن</label>
-      <input type="text" id="awb">
+      <label for="awb">رقم بوليصة الشحن</label>
+      <input type="text" id="awb" dir="ltr" maxlength="500">
+      <button type="button" id="awbScanButton" class="awb-scan-button" aria-controls="awbScanner" aria-expanded="false">قراءة الباركود</button>
     </div>
     <div>
       <label>اسم المستورد</label>
@@ -201,6 +207,12 @@
       <input type="text" id="fromCountry">
     </div>
   </div>
+
+  <div id="awbScanner" hidden>
+    <video id="awbVideo" autoplay playsinline muted aria-label="معاينة كاميرا الباركود"></video>
+    <button type="button" id="awbCloseScanner" class="awb-scan-button">إغلاق الكاميرا</button>
+  </div>
+  <p id="awbScanStatus" role="status"></p>
 
   <label>نوع الشحنة</label>
   <div style="display:flex; gap:18px; margin:6px 0 4px;">
@@ -863,6 +875,143 @@ function normalizeDigits(str) {
   }).join('');
 }
 
+const awbScanner = document.getElementById('awbScanner');
+const awbVideo = document.getElementById('awbVideo');
+const awbScanButton = document.getElementById('awbScanButton');
+const awbScanStatus = document.getElementById('awbScanStatus');
+let awbScan = null;
+let awbDecoderLoading = null;
+
+function loadAwbDecoder() {
+  if (window.ZXing?.MultiFormatReader) return Promise.resolve(window.ZXing);
+  if (!awbDecoderLoading) {
+    awbDecoderLoading = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+      script.integrity = 'sha384-BzBxP10ZE72aitqj5UMmUsbKFliP/DZqA8Wq+BNNhlIJDGoEd1tpkMYXOg9+n6sB';
+      script.crossOrigin = 'anonymous';
+      const fail = () => {
+        clearTimeout(timeout);
+        script.remove();
+        reject(new Error('Barcode decoder unavailable'));
+      };
+      const timeout = setTimeout(fail, 10000);
+      script.onerror = fail;
+      script.onload = () => {
+        if (!window.ZXing?.MultiFormatReader) return fail();
+        clearTimeout(timeout);
+        resolve(window.ZXing);
+      };
+      document.head.appendChild(script);
+    }).catch(error => {
+      awbDecoderLoading = null;
+      throw error;
+    });
+  }
+  return awbDecoderLoading;
+}
+
+function makeAwbReader(zxing) {
+  const formats = ['CODE_128', 'CODE_39', 'CODE_93', 'ITF', 'EAN_13', 'EAN_8', 'UPC_A', 'UPC_E', 'CODABAR'];
+  const reader = new zxing.MultiFormatReader();
+  reader.setHints(new Map([
+    [zxing.DecodeHintType.POSSIBLE_FORMATS, formats.map(format => zxing.BarcodeFormat[format])],
+    [zxing.DecodeHintType.TRY_HARDER, true]
+  ]));
+  return reader;
+}
+
+function stopAwbScan(message = '') {
+  const scan = awbScan;
+  awbScan = null;
+  if (scan) {
+    clearTimeout(scan.timer);
+    scan.stream?.getTracks().forEach(track => track.stop());
+    awbVideo.pause();
+    awbVideo.srcObject = null;
+  }
+  awbScanner.hidden = true;
+  awbScanButton.disabled = false;
+  awbScanButton.setAttribute('aria-expanded', 'false');
+  awbScanStatus.textContent = message;
+}
+
+async function startAwbScan() {
+  if (!currentIdentity || awbScan) return;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    awbScanStatus.textContent = 'الكاميرا غير متاحة في هذا المتصفح. اكتب رقم البوليصة يدويًا.';
+    return;
+  }
+  const scan = { stream: null, timer: null };
+  awbScan = scan;
+  awbScanButton.disabled = true;
+  awbScanButton.setAttribute('aria-expanded', 'true');
+  awbScanner.hidden = false;
+  awbScanStatus.textContent = 'جاري فتح الكاميرا…';
+  let zxing;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } }, audio: false
+    });
+    if (awbScan !== scan) {
+      stream.getTracks().forEach(track => track.stop());
+      return;
+    }
+    scan.stream = stream;
+    awbVideo.srcObject = stream;
+    await awbVideo.play();
+    if (awbScan !== scan) return;
+    zxing = await loadAwbDecoder();
+  } catch (error) {
+    if (awbScan === scan) {
+      stopAwbScan(error.name === 'NotAllowedError'
+        ? 'اسمح باستخدام الكاميرا من إعدادات المتصفح أو اكتب الرقم يدويًا.'
+        : 'تعذر تشغيل قارئ الباركود. جرّب مرة ثانية أو اكتب الرقم يدويًا.');
+    }
+    return;
+  }
+  if (awbScan !== scan) return;
+
+  const reader = makeAwbReader(zxing);
+  const frame = document.createElement('canvas');
+  const ctx = frame.getContext('2d', { willReadFrequently: true });
+  awbScanStatus.textContent = 'وجّه الكاميرا إلى الباركود الطولي على البوليصة.';
+
+  function scanFrame() {
+    if (awbScan !== scan || !currentIdentity) return;
+    if (awbVideo.readyState >= 2 && awbVideo.videoWidth && awbVideo.videoHeight) {
+      try {
+        const scale = Math.min(1, 1000 / Math.max(awbVideo.videoWidth, awbVideo.videoHeight));
+        const width = Math.max(1, Math.round(awbVideo.videoWidth * scale));
+        const height = Math.max(1, Math.round(awbVideo.videoHeight * scale));
+        if (frame.width !== width || frame.height !== height) {
+          frame.width = width;
+          frame.height = height;
+        }
+        ctx.drawImage(awbVideo, 0, 0, width, height);
+        const bitmap = new zxing.BinaryBitmap(new zxing.HybridBinarizer(new zxing.HTMLCanvasElementLuminanceSource(frame)));
+        const value = normalizeDigits(reader.decodeWithState(bitmap).getText().trim());
+        if (value && value.length <= 500 && !/[\x00-\x1f\x7f]/.test(value)) {
+          document.getElementById('awb').value = value;
+          stopAwbScan('تمت قراءة الباركود. تأكد من رقم البوليصة في الخانة.');
+          return;
+        }
+      } catch (error) {
+        if (!(error instanceof zxing.NotFoundException) && !(error instanceof zxing.ChecksumException) && !(error instanceof zxing.FormatException)) {
+          stopAwbScan('توقف قارئ الباركود. جرّب مرة ثانية أو اكتب الرقم يدويًا.');
+          return;
+        }
+      }
+    }
+    scan.timer = setTimeout(scanFrame, 180);
+  }
+  scanFrame();
+}
+
+awbScanButton.addEventListener('click', startAwbScan);
+document.getElementById('awbCloseScanner').addEventListener('click', () => stopAwbScan());
+window.addEventListener('pagehide', () => stopAwbScan());
+
 function toggleShipmentType() {
   const isTransit = document.querySelector('input[name="shipmentType"]:checked').value === 'transit';
   document.getElementById('toCountryBox').style.display = isTransit ? 'block' : 'none';
@@ -948,6 +1097,7 @@ async function submitEmployeeLogin() {
   finally { setLoginBusy(false); }
 }
 function lockSessionView(metadata = {}) {
+  stopAwbScan();
   const owner = currentIdentity || retainedIdentity;
   // A known different Auth UID is a confirmed account change, not a retry.
   if (owner && metadata.uid && owner.uid !== metadata.uid) {
@@ -991,6 +1141,7 @@ function applyIdentity(identity, metadata = {}) {
 }
 
 function clearSessionView() {
+  stopAwbScan();
   viewVersion++;
   currentIdentity = null;
   retainedIdentity = null;
