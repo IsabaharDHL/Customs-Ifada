@@ -91,6 +91,14 @@
     width: 20px; height: 20px; border-radius: 50%; font-size: 12px; text-align: center;
     line-height: 20px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3);
   }
+  .scan-panel + .scan-panel { margin-top: 16px; }
+  .scan-panel label { color: var(--navy); }
+  .scan-panel img, .scan-panel canvas { display: block; max-width: 100%; max-height: 420px; margin: 8px auto; }
+  .scan-panel [hidden], #sigPreview[hidden] { display: none; }
+  .scan-panel canvas { cursor: crosshair; }
+  .scan-panel [role=status] { font-size: 12px; margin: 6px 0; }
+  .scan-panel button { margin: 3px; padding: 7px; }
+  #sigPreview { display: block; max-width: 100%; max-height: 72px; margin-top: 8px; }
   #generateBtn {
     width: 100%; padding: 16px; font-size: 15.5px; font-weight: bold;
     background: linear-gradient(180deg, var(--gold) 0%, var(--gold-dark) 100%);
@@ -257,6 +265,7 @@
   </div>
   <label>أو ارفع صورة التوقيع</label>
   <input type="file" accept="image/*" id="sigFileInput" onchange="handleSignatureFile(event)">
+  <img id="sigPreview" alt="معاينة التوقيع بعد إزالة الخلفية" hidden>
   <div id="sigStatus" style="font-size:12px; margin-top:6px;"></div>
 </div>
 
@@ -266,6 +275,30 @@
   <div class="checkline"><input type="checkbox" id="att2"><label style="margin:0;">بوليصة الشحن</label></div>
   <div class="checkline"><input type="checkbox" id="att3"><label style="margin:0;">صور للمادة</label></div>
   <div class="checkline"><input type="checkbox" id="att4"><label style="margin:0;">وحدة جناح الأثر</label></div>
+</div>
+
+<div class="card">
+  <h3>مسح المستندات</h3>
+  <div class="scan-panel" id="waybill">
+    <label for="waybillCamera">بوليصة الشحن</label>
+    <input id="waybillCamera" type="file" accept="image/*" capture="environment" aria-label="تصوير بوليصة الشحن">
+    <p role="status"></p>
+    <img alt="معاينة بوليصة الشحن" hidden>
+    <canvas aria-label="تحديد زوايا بوليصة الشحن" hidden></canvas>
+    <button type="button" data-edit hidden>تعديل الزوايا</button>
+    <button type="button" data-cancel hidden>إلغاء تعديل الزوايا</button>
+    <button type="button" data-remove hidden>حذف المستند</button>
+  </div>
+  <div class="scan-panel" id="receipt">
+    <label for="receiptCamera">وصل الأمانة</label>
+    <input id="receiptCamera" type="file" accept="image/*" capture="environment" aria-label="تصوير وصل الأمانة">
+    <p role="status"></p>
+    <img alt="معاينة وصل الأمانة" hidden>
+    <canvas aria-label="تحديد زوايا وصل الأمانة" hidden></canvas>
+    <button type="button" data-edit hidden>تعديل الزوايا</button>
+    <button type="button" data-cancel hidden>إلغاء تعديل الزوايا</button>
+    <button type="button" data-remove hidden>حذف المستند</button>
+  </div>
 </div>
 
 <div class="card">
@@ -312,6 +345,356 @@ let uploadedImages = [];
 let currentSignature = null;
 let sigCtx, sigDrawing = false, sigLastX = 0, sigLastY = 0;
 
+const scanSlots = ['waybill', 'receipt'].map(id => {
+  const panel = document.getElementById(id);
+  return {
+    panel, source: null, result: null, points: [], version: 0, busy: false, editing: false,
+    status: panel.querySelector('[role=status]'),
+    preview: panel.querySelector('img'),
+    editor: panel.querySelector('canvas')
+  };
+});
+let signatureVersion = 0;
+let signatureBusy = false;
+
+async function photoCanvas(file, maxSize) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    const scale = Math.min(1, maxSize / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function brightness(data, i) {
+  return Math.round(0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2]);
+}
+
+// Estimate paper brightness from the lighter pixels in each tile.
+function paperLighting(image, columns, rows) {
+  const { data, width, height } = image;
+  const levels = [];
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < columns; col++) {
+      const histogram = new Uint32Array(256);
+      let count = 0;
+      for (let y = Math.floor(row * height / rows); y < (row + 1) * height / rows; y += 2) {
+        for (let x = Math.floor(col * width / columns); x < (col + 1) * width / columns; x += 2) {
+          const i = (y * width + x) * 4;
+          if (data[i + 3] < 240) continue;
+          histogram[brightness(data, i)]++;
+          count++;
+        }
+      }
+      let remaining = Math.max(1, Math.ceil(count * 0.20));
+      let level = 255;
+      while (level > 0 && (remaining -= histogram[level]) > 0) level--;
+      levels.push(count ? level : 255);
+    }
+  }
+  const ordered = [...levels].sort((a, b) => a - b);
+  return {
+    reference: ordered[Math.floor(ordered.length * 0.85)],
+    low: ordered[Math.floor(ordered.length * 0.10)],
+    at(x, y) {
+      const gx = Math.max(0, Math.min(columns - 1, x * columns / width - 0.5));
+      const gy = Math.max(0, Math.min(rows - 1, y * rows / height - 0.5));
+      const left = Math.floor(gx), top = Math.floor(gy);
+      const right = Math.min(left + 1, columns - 1), bottom = Math.min(top + 1, rows - 1);
+      const a = levels[top * columns + left] * (1 - (gx - left)) + levels[top * columns + right] * (gx - left);
+      const b = levels[bottom * columns + left] * (1 - (gx - left)) + levels[bottom * columns + right] * (gx - left);
+      return a * (1 - (gy - top)) + b * (gy - top);
+    }
+  };
+}
+
+function extractSignature(canvas) {
+  const ctx = canvas.getContext('2d');
+  const { width, height } = canvas;
+  const image = ctx.getImageData(0, 0, width, height);
+  const { data } = image;
+  let transparentPixels = 0;
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] < 24) transparentPixels++;
+  }
+  const lighting = transparentPixels > width * height * 0.05 ? null : paperLighting(image, 6, 6);
+  let left = width, top = height, right = -1, bottom = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      if (data[i + 3] === 0) continue;
+      if (lighting && data[i + 3] === 255) {
+        const paper = Math.max(1, lighting.at(x, y));
+        const rgb = [0, 1, 2].map(c => Math.min(255, data[i + c] * 255 / paper));
+        const strength = 255 - Math.min(...rgb);
+        data[i + 3] = strength <= 24 ? 0 : strength;
+        if (strength > 24) {
+          rgb.forEach((value, c) => { data[i + c] = 255 - (255 - value) * 255 / strength; });
+        }
+      }
+      if (data[i + 3] > 0) {
+        left = Math.min(left, x); top = Math.min(top, y);
+        right = Math.max(right, x); bottom = Math.max(bottom, y);
+      }
+    }
+  }
+  if (right < left) throw new Error('لا يظهر حبر التوقيع في الصورة');
+  const result = document.createElement('canvas');
+  result.width = right - left + 5;
+  result.height = bottom - top + 5;
+  result.getContext('2d').putImageData(image, 2 - left, 2 - top);
+  let output = result;
+  let src = output.toDataURL('image/png');
+  // Keep uploaded signatures within the existing Firestore field limit.
+  while (src.length > 800000) {
+    const smaller = document.createElement('canvas');
+    smaller.width = Math.max(1, Math.floor(output.width * 0.75));
+    smaller.height = Math.max(1, Math.floor(output.height * 0.75));
+    smaller.getContext('2d').drawImage(output, 0, 0, smaller.width, smaller.height);
+    output = smaller;
+    src = output.toDataURL('image/png');
+  }
+  return src;
+}
+
+function quadArea(points) {
+  return points.reduce((area, p, i) => {
+    const q = points[(i + 1) % 4];
+    return area + p.x * q.y - p.y * q.x;
+  }, 0) / 2;
+}
+
+function validQuad(points, width, height) {
+  return points.length === 4 && quadArea(points) > width * height * 0.025 &&
+    points.every((a, i) => {
+      const b = points[(i + 1) % 4], c = points[(i + 2) % 4];
+      return (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x) > 0;
+    });
+}
+
+function detectPaper(source) {
+  const sample = document.createElement('canvas');
+  const scale = Math.min(1, 256 / Math.max(source.width, source.height));
+  const width = sample.width = Math.max(1, Math.round(source.width * scale));
+  const height = sample.height = Math.max(1, Math.round(source.height * scale));
+  const ctx = sample.getContext('2d');
+  ctx.drawImage(source, 0, 0, width, height);
+  const { data } = ctx.getImageData(0, 0, width, height);
+  const border = [], center = [];
+  for (let y = 0; y < height; y += 2) {
+    for (let x = 0; x < width; x += 2) {
+      const value = brightness(data, (y * width + x) * 4);
+      if (x < width * 0.04 || x > width * 0.96 || y < height * 0.04 || y > height * 0.96) border.push(value);
+      if (x > width * 0.32 && x < width * 0.68 && y > height * 0.32 && y < height * 0.68) center.push(value);
+    }
+  }
+  const percentile = (values, fraction) => values.sort((a, b) => a - b)[Math.floor(values.length * fraction)];
+  const background = percentile(border, 0.75);
+  const paper = percentile(center, 0.65);
+  if (!(paper - background >= 26)) return [];
+  const threshold = background + (paper - background) * 0.28;
+  const points = [];
+  const best = [-Infinity, -Infinity, -Infinity, -Infinity];
+  let count = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (brightness(data, (y * width + x) * 4) < threshold) continue;
+      count++;
+      const scores = [-x - y, x - y, x + y, y - x];
+      scores.forEach((score, i) => {
+        if (score > best[i]) {
+          best[i] = score;
+          points[i] = { x, y };
+        }
+      });
+    }
+  }
+  if (!validQuad(points, width, height)) return [];
+  const area = quadArea(points);
+  if (area < width * height * 0.15 || count < area * 0.58 || count > area * 1.08) return [];
+  if (points.some(p => p.x < 2 || p.y < 2 || p.x >= width - 2 || p.y >= height - 2)) return [];
+  return points.map(p => ({ x: p.x * source.width / width, y: p.y * source.height / height }));
+}
+
+function straightenPaper(source, points) {
+  const [a, b, c, d] = points;
+  const distance = (p, q) => Math.hypot(p.x - q.x, p.y - q.y);
+  const width = (distance(a, b) + distance(d, c)) / 2;
+  const height = (distance(a, d) + distance(b, c)) / 2;
+  const result = document.createElement('canvas');
+  result.width = Math.max(2, Math.round(width));
+  result.height = Math.max(2, Math.round(height));
+  const dx = a.x - b.x + c.x - d.x, dy = a.y - b.y + c.y - d.y;
+  const bx = b.x - c.x, by = b.y - c.y, cx = d.x - c.x, cy = d.y - c.y;
+  const determinant = bx * cy - cx * by;
+  const g = (dx * cy - cx * dy) / determinant;
+  const h = (bx * dy - dx * by) / determinant;
+  const ax = b.x - a.x + g * b.x, ay = b.y - a.y + g * b.y;
+  const ex = d.x - a.x + h * d.x, ey = d.y - a.y + h * d.y;
+  const input = source.getContext('2d').getImageData(0, 0, source.width, source.height).data;
+  const ctx = result.getContext('2d');
+  const output = ctx.createImageData(result.width, result.height);
+  for (let y = 0; y < result.height; y++) {
+    const v = y / (result.height - 1);
+    for (let x = 0; x < result.width; x++) {
+      const u = x / (result.width - 1);
+      const divisor = 1 + g * u + h * v;
+      const sx = Math.max(0, Math.min(source.width - 1, (ax * u + ex * v + a.x) / divisor));
+      const sy = Math.max(0, Math.min(source.height - 1, (ay * u + ey * v + a.y) / divisor));
+      const ix = Math.floor(sx), iy = Math.floor(sy);
+      const fx = sx - ix, fy = sy - iy;
+      const stepX = ix < source.width - 1 ? 4 : 0;
+      const stepY = iy < source.height - 1 ? source.width * 4 : 0;
+      const start = (iy * source.width + ix) * 4;
+      const target = (y * result.width + x) * 4;
+      for (let channel = 0; channel < 4; channel++) {
+        const i = start + channel;
+        output.data[target + channel] = (input[i] * (1 - fx) + input[i + stepX] * fx) * (1 - fy)
+          + (input[i + stepY] * (1 - fx) + input[i + stepY + stepX] * fx) * fy;
+      }
+    }
+  }
+  ctx.putImageData(output, 0, 0);
+  return result;
+}
+
+function cleanPaper(canvas) {
+  const ctx = canvas.getContext('2d');
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const lighting = paperLighting(image, 16, 16);
+  if (lighting.reference - lighting.low < 18) return;
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      const local = lighting.at(x, y);
+      const lift = Math.min(1.6, 1 + Math.max(0, lighting.reference - local - 6) / Math.max(55, local));
+      const i = (y * canvas.width + x) * 4;
+      for (let channel = 0; channel < 3; channel++) image.data[i + channel] *= lift;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
+function renderScan(slot) {
+  slot.preview.hidden = !slot.result || slot.editing;
+  if (slot.result) slot.preview.src = slot.result;
+  else slot.preview.removeAttribute('src');
+  slot.editor.hidden = !slot.editing;
+  slot.panel.querySelector('[data-edit]').hidden = !slot.source || slot.editing;
+  slot.panel.querySelector('[data-remove]').hidden = !slot.source && !slot.busy;
+  slot.panel.querySelector('[data-cancel]').hidden = !slot.editing || !slot.result;
+  if (!slot.editing) return;
+  const scale = Math.min(1, 600 / Math.max(slot.source.width, slot.source.height));
+  const canvas = slot.editor;
+  canvas.width = Math.max(1, Math.round(slot.source.width * scale));
+  canvas.height = Math.max(1, Math.round(slot.source.height * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(slot.source, 0, 0, canvas.width, canvas.height);
+  slot.points.forEach((p, index) => {
+    const x = p.x * canvas.width / slot.source.width;
+    const y = p.y * canvas.height / slot.source.height;
+    ctx.fillStyle = '#16264d';
+    ctx.beginPath();
+    ctx.arc(x, y, 12, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(index + 1), x, y);
+  });
+}
+
+function finishScan(slot, points) {
+  const page = straightenPaper(slot.source, points);
+  cleanPaper(page);
+  slot.result = page.toDataURL('image/jpeg', 0.94);
+  slot.editing = false;
+  slot.status.textContent = 'المستند جاهز. راجع المعاينة.';
+  renderScan(slot);
+}
+
+function startCornerSelection(slot) {
+  slot.editing = true;
+  slot.points = [];
+  slot.status.textContent = 'اضغط الزوايا بالترتيب: أعلى اليسار، أعلى اليمين، أسفل اليمين، أسفل اليسار.';
+  renderScan(slot);
+}
+
+function clearScan(slot) {
+  slot.version++;
+  slot.source = slot.result = null;
+  slot.points = [];
+  slot.busy = slot.editing = false;
+  slot.status.textContent = '';
+  renderScan(slot);
+}
+
+for (const slot of scanSlots) {
+  slot.panel.querySelector('input').addEventListener('change', async event => {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file || !currentIdentity) return;
+    const version = ++slot.version;
+    const ownerVersion = viewVersion;
+    slot.busy = true;
+    slot.status.textContent = 'جاري فحص الورقة…';
+    renderScan(slot);
+    try {
+      const source = await photoCanvas(file, 2200);
+      if (version !== slot.version || ownerVersion !== viewVersion) return;
+      slot.source = source;
+      slot.result = null;
+      const points = detectPaper(source);
+      if (points.length) finishScan(slot, points);
+      else startCornerSelection(slot);
+    } catch {
+      if (version !== slot.version || ownerVersion !== viewVersion) return;
+      if (slot.source && !slot.result) startCornerSelection(slot);
+      else slot.status.textContent = slot.result
+        ? 'تعذر قراءة الصورة الجديدة. المستند السابق ما زال مرفقًا.'
+        : 'تعذر قراءة الصورة. صوّر الورقة مرة ثانية.';
+    } finally {
+      if (version === slot.version && ownerVersion === viewVersion) {
+        slot.busy = false;
+        renderScan(slot);
+      }
+    }
+  });
+  slot.panel.querySelector('[data-edit]').onclick = () => startCornerSelection(slot);
+  slot.panel.querySelector('[data-remove]').onclick = () => clearScan(slot);
+  slot.panel.querySelector('[data-cancel]').onclick = () => {
+    slot.editing = false;
+    slot.status.textContent = 'المستند جاهز. راجع المعاينة.';
+    renderScan(slot);
+  };
+  slot.editor.addEventListener('click', event => {
+    if (!slot.editing || slot.busy || !currentIdentity) return;
+    const rect = slot.editor.getBoundingClientRect();
+    slot.points.push({
+      x: (event.clientX - rect.left) * (slot.source.width - 1) / rect.width,
+      y: (event.clientY - rect.top) * (slot.source.height - 1) / rect.height
+    });
+    if (slot.points.length < 4) return renderScan(slot);
+    if (!validQuad(slot.points, slot.source.width, slot.source.height)) {
+      startCornerSelection(slot);
+      slot.status.textContent = 'الزوايا غير مرتبة. ابدأ من أعلى اليسار واتبع اتجاه عقارب الساعة.';
+      return;
+    }
+    try {
+      finishScan(slot, slot.points);
+    } catch {
+      startCornerSelection(slot);
+      slot.status.textContent = 'تعذر تصحيح الورقة. حدّد الزوايا مجدداً أو أعد التصوير.';
+    }
+  });
+}
+
 function initSignaturePad() {
   const canvas = document.getElementById('sigCanvas');
   const rect = canvas.getBoundingClientRect();
@@ -355,6 +738,11 @@ function initSignaturePad() {
 }
 
 function clearSignature() {
+  signatureVersion++;
+  signatureBusy = false;
+  const preview = document.getElementById('sigPreview');
+  preview.hidden = true;
+  preview.removeAttribute('src');
   const canvas = document.getElementById('sigCanvas');
   sigCtx.clearRect(0, 0, canvas.width, canvas.height);
   currentSignature = null;
@@ -362,20 +750,33 @@ function clearSignature() {
   document.getElementById('sigStatus').textContent = '';
 }
 
-function handleSignatureFile(event) {
-  const version = viewVersion;
+async function handleSignatureFile(event) {
   if (!currentIdentity) return;
   const file = event.target.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    normalizeImage(e.target.result).then(fixedSrc => {
-      if (version !== viewVersion || !(currentIdentity || retainedIdentity)) return;
-      currentSignature = fixedSrc;
-      document.getElementById('sigStatus').innerHTML = '<span class="ok">تم إرفاق صورة التوقيع ✓</span>';
-    });
-  };
-  reader.readAsDataURL(file);
+  event.target.value = '';
+  const version = ++signatureVersion;
+  const ownerVersion = viewVersion;
+  const status = document.getElementById('sigStatus');
+  const preview = document.getElementById('sigPreview');
+  signatureBusy = true;
+  currentSignature = null;
+  preview.hidden = true;
+  preview.removeAttribute('src');
+  status.textContent = 'جاري تفريغ التوقيع…';
+  try {
+    const canvas = await photoCanvas(file, 1200);
+    if (version !== signatureVersion || ownerVersion !== viewVersion) return;
+    currentSignature = extractSignature(canvas);
+    preview.src = currentSignature;
+    preview.hidden = false;
+    status.textContent = 'صورة التوقيع جاهزة ✓';
+  } catch {
+    if (version !== signatureVersion || ownerVersion !== viewVersion) return;
+    status.textContent = 'تعذر استخراج التوقيع. جرّب صورة واضحة لتوقيعك على ورقة فاتحة.';
+  } finally {
+    if (version === signatureVersion && ownerVersion === viewVersion) signatureBusy = false;
+  }
 }
 
 function captureCanvasSignature() {
@@ -538,6 +939,7 @@ function clearSessionView() {
   if (signaturePadReady) clearSignature();
   currentSignature = null;
   uploadedImages = [];
+  scanSlots.forEach(clearScan);
   renderImgList();
   for (const input of document.querySelectorAll('#formArea input, #formArea textarea, #formArea select')) {
     if (['checkbox', 'radio'].includes(input.type)) input.checked = input.defaultChecked;
@@ -720,7 +1122,7 @@ function buildTemplate(data, dt) {
       <div style="display:inline-flex; align-items:center; gap:10px;">
         <span>التوقيع:</span>
         ${data.signature
-          ? `<img src="${data.signature}" style="height:50px;">`
+          ? `<img src="${data.signature}" style="height:50px;max-width:220px;object-fit:contain;">`
           : `<div style="border-bottom:1px solid #333; width:170px; height:36px;"></div>`}
       </div>
     </div>
@@ -773,6 +1175,11 @@ async function generatePdf() {
   if (!currentIdentity) return setLoginStatus('سجل الدخول أولاً.', true);
   const generatingIdentity = { ...currentIdentity };
   const generatingViewVersion = viewVersion;
+  if (signatureBusy || scanSlots.some(slot => slot.busy || slot.editing)) {
+    statusMsg.textContent = 'انتظر معالجة الصورة أو أكمل تحديد زوايا المستند قبل التوليد.';
+    return;
+  }
+  const generatingDocuments = scanSlots.map(slot => slot.result).filter(Boolean);
   const generatingImages = uploadedImages.slice();
   let pdfUrl = null;
   const data = collectFormData();
@@ -817,7 +1224,7 @@ async function generatePdf() {
     const imgHeight = (imgProps.h * pageWidth) / imgProps.w;
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageWidth, Math.min(imgHeight, pageHeight));
 
-    for (const imgSrc of generatingImages) {
+    for (const imgSrc of [...generatingDocuments, ...generatingImages]) {
       pdf.addPage();
       const img = await loadImage(imgSrc);
       const ratio = Math.min((pageWidth - 20) / img.width, (pageHeight - 20) / img.height);
