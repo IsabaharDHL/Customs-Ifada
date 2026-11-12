@@ -101,7 +101,7 @@
   #awbScanStatus:empty { margin: 0; }
   #documentCamera[hidden] { display: none; }
   #documentCamera { position: fixed; inset: 0; z-index: 50; background: #10141d; color: white; display: flex; flex-direction: column; justify-content: center; padding: 14px; overflow: auto; }
-  .document-camera-frame { position: relative; width: min(100%, 52dvh); margin: 0 auto; }
+  .document-camera-frame { position: relative; width: min(100%, 52vh); width: min(100%, 52dvh); margin: 0 auto; }
   #documentVideo { display: block; width: 100%; border-radius: 10px; }
   #documentOutline { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
   .document-camera-actions { display: flex; justify-content: center; align-items: center; gap: 12px; }
@@ -117,7 +117,7 @@
   .scan-tilt output { direction: ltr; unicode-bidi: isolate; }
   .scan-panel [role=status] { font-size: 12px; margin: 6px 0; }
   .scan-panel button { margin: 3px; padding: 7px; }
-  #sigOpacity { display: block; width: 100%; accent-color: var(--navy); }
+  #sigBackground { display: block; width: 100%; accent-color: var(--navy); }
   #sigPreview { display: block; max-width: 100%; max-height: 72px; margin-top: 8px; }
   #generateBtn {
     width: 100%; padding: 16px; font-size: 15.5px; font-weight: bold;
@@ -298,8 +298,10 @@
   <label>أو ارفع صورة التوقيع</label>
   <input type="file" accept="image/*" id="sigFileInput" onchange="handleSignatureFile(event)">
   <img id="sigPreview" alt="معاينة التوقيع بعد إزالة الخلفية" hidden>
-  <label for="sigOpacity">شفافية التوقيع <output id="sigOpacityValue" for="sigOpacity" dir="ltr">0%</output></label>
-  <input id="sigOpacity" type="range" min="0" max="90" step="5" value="0" dir="ltr">
+  <div id="sigBackgroundControls" hidden>
+    <label for="sigBackground">إزالة ظل خلفية التوقيع <output id="sigBackgroundValue" for="sigBackground" dir="ltr">50%</output></label>
+    <input id="sigBackground" type="range" min="0" max="100" step="5" value="50" dir="ltr">
+  </div>
   <div id="sigStatus" style="font-size:12px; margin-top:6px;"></div>
 </div>
 
@@ -317,6 +319,8 @@
     <label for="waybillScan">بوليصة الشحن</label>
     <button id="waybillScan" type="button" data-open-camera>مسح المستند</button>
     <button type="button" data-device-camera>التقاط من كاميرا الجهاز</button>
+    <button type="button" data-pick-document>اختيار ملف من الجوال</button>
+    <input id="waybillFile" type="file" accept="application/pdf,.pdf,image/*" data-document-file hidden>
     <input id="waybillCamera" type="file" accept="image/*" capture="environment" aria-label="تصوير بوليصة الشحن" hidden>
     <p role="status"></p>
     <canvas data-preview role="img" aria-label="معاينة بوليصة الشحن" hidden></canvas>
@@ -334,6 +338,8 @@
     <label for="receiptScan">وصل الأمانة</label>
     <button id="receiptScan" type="button" data-open-camera>مسح المستند</button>
     <button type="button" data-device-camera>التقاط من كاميرا الجهاز</button>
+    <button type="button" data-pick-document>اختيار ملف من الجوال</button>
+    <input id="receiptFile" type="file" accept="application/pdf,.pdf,image/*" data-document-file hidden>
     <input id="receiptCamera" type="file" accept="image/*" capture="environment" aria-label="تصوير وصل الأمانة" hidden>
     <p role="status"></p>
     <canvas data-preview role="img" aria-label="معاينة وصل الأمانة" hidden></canvas>
@@ -371,6 +377,7 @@
   <p id="documentCameraStatus" role="status"></p>
   <div class="document-camera-actions">
     <button type="button" data-shutter>التقاط يدوي</button>
+    <button type="button" data-camera-file>اختيار ملف</button>
     <button type="button" data-close-camera>إغلاق</button>
   </div>
 </section>
@@ -408,7 +415,7 @@ let sigCtx, sigDrawing = false, sigLastX = 0, sigLastY = 0;
 const scanSlots = ['waybill', 'receipt'].map(id => {
   const panel = document.getElementById(id);
   return {
-    panel, source: null, result: null, angle: 0, autoPoints: null, appliedPoints: null, points: [], version: 0, busy: false, editing: false,
+    panel, source: null, result: null, pdf: null, angle: 0, autoPoints: null, appliedPoints: null, points: [], version: 0, busy: false, editing: false,
     status: panel.querySelector('[role=status]'),
     preview: panel.querySelector('[data-preview]'),
     tilt: panel.querySelector('[data-tilt]'),
@@ -475,7 +482,7 @@ function paperLighting(image, columns, rows) {
   };
 }
 
-function extractSignature(canvas) {
+function extractSignature(canvas, cleanup = 50) {
   const ctx = canvas.getContext('2d');
   const { width, height } = canvas;
   const image = ctx.getImageData(0, 0, width, height);
@@ -494,8 +501,11 @@ function extractSignature(canvas) {
         const paper = Math.max(1, lighting.at(x, y));
         const rgb = [0, 1, 2].map(c => Math.min(255, data[i + c] * 255 / paper));
         const strength = 255 - Math.min(...rgb);
-        data[i + 3] = strength <= 24 ? 0 : strength;
-        if (strength > 24) {
+        const saturation = Math.max(...rgb) - Math.min(...rgb);
+        const isInk = strength >= 120 || saturation >= 22;
+        const cutoff = isInk ? 16 : 18 + cleanup * 0.80;
+        data[i + 3] = strength <= cutoff ? 0 : strength;
+        if (strength > cutoff) {
           rgb.forEach((value, c) => { data[i + c] = 255 - (255 - value) * 255 / strength; });
         }
       }
@@ -697,7 +707,7 @@ function renderScan(slot) {
   else slot.preview.width = slot.preview.height = 1;
   slot.editor.hidden = !slot.editing;
   slot.panel.querySelector('[data-edit]').hidden = !slot.source || slot.editing;
-  slot.panel.querySelector('[data-remove]').hidden = !slot.source && !slot.busy;
+  slot.panel.querySelector('[data-remove]').hidden = !slot.source && !slot.pdf && !slot.busy;
   slot.panel.querySelector('[data-cancel]').hidden = !slot.editing || !slot.result;
   if (!slot.editing) return;
   const scale = Math.min(1, 600 / Math.max(slot.source.width, slot.source.height));
@@ -726,6 +736,7 @@ function finishScan(slot, source, points) {
   cleanPaper(page);
   if (slot.source !== source) slot.autoPoints = points;
   slot.source = source;
+  slot.pdf = null;
   slot.result = page;
   slot.appliedPoints = points;
   slot.angle = 0;
@@ -743,7 +754,7 @@ function startCornerSelection(slot) {
 
 function clearScan(slot) {
   slot.version++;
-  slot.source = slot.result = null;
+  slot.source = slot.result = slot.pdf = null;
   slot.autoPoints = slot.appliedPoints = null;
   slot.angle = 0;
   slot.points = [];
@@ -753,34 +764,52 @@ function clearScan(slot) {
 }
 
 for (const slot of scanSlots) {
-  const fileInput = slot.panel.querySelector('input[type=file]');
+  const fileInput = slot.panel.querySelector('input[capture]');
+  const attachmentInput = slot.panel.querySelector('[data-document-file]');
+  slot.panel.querySelector('[data-pick-document]').onclick = () => attachmentInput.click();
   slot.panel.querySelector('[data-open-camera]').onclick = () => startDocumentCamera(slot);
   slot.panel.querySelector('[data-device-camera]').onclick = () => fileInput.click();
-  fileInput.addEventListener('change', async event => {
+  async function attachDocument(event) {
     const file = event.target.files[0];
     event.target.value = '';
     if (!file || !currentIdentity) return;
     const version = ++slot.version;
     const ownerVersion = viewVersion;
     slot.busy = true;
-    slot.status.textContent = 'جاري فحص الورقة…';
+    slot.status.textContent = 'جاري فتح المرفق…';
     renderScan(slot);
     try {
-      const source = await photoCanvas(file, 2200);
-      if (version !== slot.version || ownerVersion !== viewVersion) return;
-      applyDocumentPhoto(slot, source, detectPaper(source));
+      if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+        const [pdfLib, bytes] = await Promise.all([loadDocumentPdfLibrary(), file.arrayBuffer()]);
+        const pdf = await pdfLib.PDFDocument.load(bytes);
+        const count = pdf.getPageCount();
+        if (!count) throw new Error('Empty PDF');
+        if (version !== slot.version || ownerVersion !== viewVersion) return;
+        slot.pdf = pdf;
+        slot.source = slot.result = null;
+        slot.autoPoints = slot.appliedPoints = null;
+        slot.editing = false;
+        slot.angle = 0;
+        slot.status.textContent = `تم إرفاق ${file.name} · عدد الصفحات ${count}`;
+      } else {
+        const source = await photoCanvas(file, 2200);
+        if (version !== slot.version || ownerVersion !== viewVersion) return;
+        applyDocumentPhoto(slot, source, detectPaper(source));
+      }
     } catch {
       if (version !== slot.version || ownerVersion !== viewVersion) return;
-      slot.status.textContent = slot.result
-        ? 'تعذر قراءة الصورة الجديدة. المستند السابق ما زال مرفقًا.'
-        : 'تعذر قراءة الصورة. صوّر الورقة مرة ثانية.';
+      slot.status.textContent = slot.result || slot.pdf
+        ? 'تعذر فتح الملف الجديد. المرفق السابق ما زال موجودًا.'
+        : 'تعذر فتح المرفق. اختر صورة أو ملف PDF صالحًا وغير محمي بكلمة مرور.';
     } finally {
       if (version === slot.version && ownerVersion === viewVersion) {
         slot.busy = false;
         renderScan(slot);
       }
     }
-  });
+  }
+  fileInput.addEventListener('change', attachDocument);
+  attachmentInput.addEventListener('change', attachDocument);
   slot.tilt.querySelector('input').addEventListener('input', event => {
     if (slot.tilt.hidden || !currentIdentity) return;
     slot.angle = Number(event.target.value);
@@ -835,6 +864,7 @@ function stopDocumentCamera() {
   documentScan = null;
   if (scan) {
     clearTimeout(scan.timer);
+    clearTimeout(scan.startupTimeout);
     scan.stream?.getTracks().forEach(track => track.stop());
     documentVideo.pause();
     documentVideo.srcObject = null;
@@ -883,6 +913,7 @@ function applyDocumentPhoto(slot, source, points) {
     finishScan(slot, source, points);
     return;
   }
+  slot.pdf = null;
   slot.source = slot.result = source;
   slot.autoPoints = slot.appliedPoints = null;
   slot.angle = 0;
@@ -914,7 +945,7 @@ function captureDocumentCamera(scan, automatic) {
 async function startDocumentCamera(slot) {
   if (!currentIdentity || slot.busy) return;
   if (!navigator.mediaDevices?.getUserMedia) {
-    slot.panel.querySelector('input[type=file]').click();
+    slot.panel.querySelector('input[capture]').click();
     return;
   }
   stopDocumentCamera();
@@ -923,6 +954,10 @@ async function startDocumentCamera(slot) {
   documentScan = scan;
   documentCamera.hidden = false;
   documentCameraStatus.textContent = 'جاري فتح الكاميرا…';
+  scan.startupTimeout = setTimeout(() => {
+    if (documentScan === scan) documentCameraStatus.textContent =
+      'الكاميرا ما عرضت صورة للحين. تقدر تختار ملف أو صورة.';
+  }, 7000);
   documentOutline.width = documentOutline.height = 1;
   documentCamera.querySelector('[data-shutter]').disabled = true;
   try {
@@ -942,6 +977,7 @@ async function startDocumentCamera(slot) {
       if (documentScan !== scan || !currentIdentity) return;
       const frame = videoDocumentFrame(480);
       if (frame) {
+        clearTimeout(scan.startupTimeout);
         const points = detectPaper(frame);
         drawDocumentOutline(frame, points);
         documentCameraStatus.textContent = points.length
@@ -956,12 +992,18 @@ async function startDocumentCamera(slot) {
   } catch {
     if (documentScan !== scan) return;
     stopDocumentCamera();
-    slot.status.textContent = 'تعذر فتح الكاميرا المباشرة. استخدم «التقاط من كاميرا الجهاز».';
+    slot.status.textContent = 'تعذر فتح الكاميرا المباشرة. اختر ملفًا من الجوال أو استخدم كاميرا الجهاز.';
   }
 }
 
 documentCamera.querySelector('[data-shutter]').onclick = () => {
   if (documentScan) captureDocumentCamera(documentScan, false);
+};
+documentCamera.querySelector('[data-camera-file]').onclick = () => {
+  const slot = documentScan?.slot;
+  if (!slot) return;
+  stopDocumentCamera();
+  slot.panel.querySelector('[data-document-file]').click();
 };
 documentCamera.querySelector('[data-close-camera]').onclick = stopDocumentCamera;
 window.addEventListener('pagehide', stopDocumentCamera);
@@ -1008,22 +1050,37 @@ function initSignaturePad() {
   canvas.addEventListener('touchend', end);
 }
 
-const signatureOpacityInput = document.getElementById('sigOpacity');
+const signatureBackgroundInput = document.getElementById('sigBackground');
+const signatureBackgroundControls = document.getElementById('sigBackgroundControls');
+let signatureSource = null;
 
-function updateSignatureOpacity() {
-  const transparency = Number(signatureOpacityInput.value);
-  const opacity = 1 - transparency / 100;
-  document.getElementById('sigOpacityValue').textContent = transparency + '%';
-  document.getElementById('sigCanvas').style.opacity = opacity;
-  document.getElementById('sigPreview').style.opacity = opacity;
-  return opacity;
+function refreshSignatureBackground() {
+  if (!signatureSource) return;
+  const cleanup = Number(signatureBackgroundInput.value);
+  const preview = document.getElementById('sigPreview');
+  const status = document.getElementById('sigStatus');
+  try {
+    currentSignature = extractSignature(signatureSource, cleanup);
+    preview.src = currentSignature;
+    preview.hidden = false;
+    status.textContent = 'صورة التوقيع جاهزة ✓';
+  } catch {
+    status.textContent = 'ما ظهر حبر واضح بهذه الدرجة. خفّض إزالة الخلفية أو جرّب صورة أوضح.';
+  }
 }
 
-signatureOpacityInput.addEventListener('input', updateSignatureOpacity);
+signatureBackgroundInput.addEventListener('input', () => {
+  document.getElementById('sigBackgroundValue').textContent = signatureBackgroundInput.value + '%';
+});
+signatureBackgroundInput.addEventListener('change', refreshSignatureBackground);
 
 function clearSignature() {
   signatureVersion++;
   signatureBusy = false;
+  signatureSource = null;
+  signatureBackgroundControls.hidden = true;
+  signatureBackgroundInput.value = signatureBackgroundInput.defaultValue;
+  document.getElementById('sigBackgroundValue').textContent = signatureBackgroundInput.value + '%';
   const preview = document.getElementById('sigPreview');
   preview.hidden = true;
   preview.removeAttribute('src');
@@ -1044,6 +1101,8 @@ async function handleSignatureFile(event) {
   const status = document.getElementById('sigStatus');
   const preview = document.getElementById('sigPreview');
   signatureBusy = true;
+  signatureSource = null;
+  signatureBackgroundControls.hidden = true;
   currentSignature = null;
   preview.hidden = true;
   preview.removeAttribute('src');
@@ -1051,10 +1110,9 @@ async function handleSignatureFile(event) {
   try {
     const canvas = await photoCanvas(file, 1200);
     if (version !== signatureVersion || ownerVersion !== viewVersion) return;
-    currentSignature = extractSignature(canvas);
-    preview.src = currentSignature;
-    preview.hidden = false;
-    status.textContent = 'صورة التوقيع جاهزة ✓';
+    signatureSource = canvas;
+    signatureBackgroundControls.hidden = false;
+    refreshSignatureBackground();
   } catch {
     if (version !== signatureVersion || ownerVersion !== viewVersion) return;
     status.textContent = 'تعذر استخراج التوقيع. جرّب صورة واضحة لتوقيعك على ورقة فاتحة.';
@@ -1417,11 +1475,10 @@ function clearSessionView() {
   renderImgList();
   for (const input of document.querySelectorAll('#formArea input, #formArea textarea, #formArea select')) {
     if (['checkbox', 'radio'].includes(input.type)) input.checked = input.defaultChecked;
-    else if (input === signatureOpacityInput) input.value = input.defaultValue;
+    else if (input === signatureBackgroundInput) input.value = input.defaultValue;
     else if (input.tagName === 'SELECT') input.selectedIndex = 0;
     else input.value = '';
   }
-  updateSignatureOpacity();
   toggleShipmentType();
   document.getElementById('regakuBox').style.display = 'none';
   document.getElementById('k9Box').style.display = 'none';
@@ -1511,7 +1568,7 @@ function todayArabicDateTime() {
   };
 }
 
-function buildTemplate(data, dt, signatureOpacity = 1) {
+function buildTemplate(data, dt) {
   data = { ...data }; // Render a safe copy; form values must never become live markup.
   const escapeText = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   // Fix for a html2canvas Arabic-shaping bug: a digit directly touching an
@@ -1598,7 +1655,7 @@ function buildTemplate(data, dt, signatureOpacity = 1) {
       <div style="display:inline-flex; align-items:center; gap:10px;">
         <span>التوقيع:</span>
         ${data.signature
-          ? `<img src="${data.signature}" style="height:50px;max-width:220px;object-fit:contain;opacity:${signatureOpacity};">`
+          ? `<img src="${data.signature}" style="height:50px;max-width:220px;object-fit:contain;">`
           : `<div style="border-bottom:1px solid #333; width:170px; height:36px;"></div>`}
       </div>
     </div>
@@ -1644,6 +1701,52 @@ function validateFormData(data) {
   return null;
 }
 
+let documentPdfLoading = null;
+
+function loadDocumentPdfLibrary() {
+  if (window.PDFLib?.PDFDocument) return Promise.resolve(window.PDFLib);
+  if (!documentPdfLoading) {
+    documentPdfLoading = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js';
+      script.integrity = 'sha384-weMABwrltA6jWR8DDe9Jp5blk+tZQh7ugpCsF3JwSA53WZM9/14PjS5LAJNHNjAI';
+      script.crossOrigin = 'anonymous';
+      const fail = () => {
+        clearTimeout(timeout);
+        script.remove();
+        reject(new Error('PDF library unavailable'));
+      };
+      const timeout = setTimeout(fail, 10000);
+      script.onerror = fail;
+      script.onload = () => {
+        if (!window.PDFLib?.PDFDocument) return fail();
+        clearTimeout(timeout);
+        resolve(window.PDFLib);
+      };
+      document.head.appendChild(script);
+    }).catch(error => {
+      documentPdfLoading = null;
+      throw error;
+    });
+  }
+  return documentPdfLoading;
+}
+
+async function mergeDocumentPdfs(baseBytes, documents) {
+  const { PDFDocument } = await loadDocumentPdfLibrary();
+  const output = await PDFDocument.load(baseBytes);
+  let index = 1; // Insert after the statement and before the evidence photos.
+  for (const document of documents) {
+    if (document.pdf) {
+      const pages = await output.copyPages(document.pdf, document.pdf.getPageIndices());
+      for (const page of pages) output.insertPage(index++, page);
+    } else {
+      index++;
+    }
+  }
+  return new Blob([await output.save()], { type: 'application/pdf' });
+}
+
 async function generatePdf() {
   const btn = document.getElementById('generateBtn');
   const statusMsg = document.getElementById('statusMsg');
@@ -1655,8 +1758,8 @@ async function generatePdf() {
     statusMsg.textContent = 'انتظر معالجة الصورة أو أكمل تحديد زوايا المستند قبل التوليد.';
     return;
   }
-  const generatingDocuments = scanSlots.filter(slot => slot.result)
-    .map(slot => ({ page: slot.result, angle: slot.angle }));
+  const generatingDocuments = scanSlots.filter(slot => slot.result || slot.pdf)
+    .map(slot => ({ page: slot.result, angle: slot.angle, pdf: slot.pdf }));
   const generatingImages = uploadedImages.slice();
   let pdfUrl = null;
   const data = collectFormData();
@@ -1677,7 +1780,7 @@ async function generatePdf() {
   holder.style.position = 'fixed';
   holder.style.top = '-9999px';
   holder.style.left = '-9999px';
-  holder.innerHTML = buildTemplate(data, dt, updateSignatureOpacity());
+  holder.innerHTML = buildTemplate(data, dt);
   document.body.appendChild(holder);
 
   try {
@@ -1701,7 +1804,7 @@ async function generatePdf() {
     const imgHeight = (imgProps.h * pageWidth) / imgProps.w;
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageWidth, Math.min(imgHeight, pageHeight));
 
-    const documentImages = generatingDocuments.map(({ page, angle }) => {
+    const documentImages = generatingDocuments.filter(doc => doc.page).map(({ page, angle }) => {
       if (!angle) return page.toDataURL('image/jpeg', 0.94);
       const rotated = document.createElement('canvas');
       drawRotatedPage(rotated, page, angle);
@@ -1719,7 +1822,9 @@ async function generatePdf() {
     }
 
     const fileName = `ifada_P${data.pNumber || 'draft'}.pdf`;
-    const pdfBlob = pdf.output('blob');
+    const pdfBlob = generatingDocuments.some(doc => doc.pdf)
+      ? await mergeDocumentPdfs(pdf.output('arraybuffer'), generatingDocuments)
+      : pdf.output('blob');
     const pdfFile = new File([pdfBlob], fileName, { type: 'application/pdf' });
     pdfUrl = URL.createObjectURL(pdfBlob);
 
@@ -1736,7 +1841,7 @@ async function generatePdf() {
     });
 
     if (viewVersion !== generatingViewVersion || currentIdentity?.uid !== generatingIdentity.uid) throw Object.assign(new Error(), {code:'employee/access-denied'});
-    showPreview(pdfUrl, pdfFile, pdf, fileName);
+    showPreview(pdfUrl, pdfFile, fileName);
     statusMsg.innerHTML = '<span class="ok">تم توليد الإفادة ✓ راجعها قبل الإرسال</span>';
   } catch (e) {
     statusMsg.textContent = e.code ? employeeAuthErrorMessage(e) : 'تعذر توليد الإفادة أو حفظها. حاول مجدداً.';
@@ -1747,7 +1852,7 @@ async function generatePdf() {
   btn.disabled = false;
 }
 
-function showPreview(pdfUrl, pdfFile, pdf, fileName) {
+function showPreview(pdfUrl, pdfFile, fileName) {
   const overlay = document.createElement('div');
   overlay.dataset.ifadaPreview = 'true';
   overlay.style.cssText = 'position:fixed; inset:0; background:#000; z-index:999; display:flex; flex-direction:column;';
