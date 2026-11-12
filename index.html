@@ -86,6 +86,13 @@
   #imgList { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
   #imgList img { width: 72px; height: 72px; object-fit: cover; border-radius: 10px; border: 1px solid #ddd; }
   .imgWrap { position: relative; }
+  .phone-pool { display:grid; grid-template-columns:repeat(auto-fill, minmax(84px, 1fr)); gap:8px; margin-top:10px; }
+  .phone-pool figure { margin:0; position:relative; border:1.5px solid #dfe3ea; border-radius:8px; overflow:hidden; background:#fff; cursor:pointer; }
+  .phone-pool img { display:block; width:100%; aspect-ratio:1; object-fit:cover; }
+  .phone-pool figure.sig img { object-fit:contain; background:#fff; }
+  .phone-pool figcaption { font-size:11px; text-align:center; padding:3px; background:#f6f7f9; }
+  .phone-pool figure.used { border-color:#15803d; }
+  .phone-pool figure.used figcaption { background:#dcfce7; color:#15803d; }
   .imgWrap span {
     position: absolute; top: -6px; left: -6px; background: var(--danger); color: #fff;
     width: 20px; height: 20px; border-radius: 50%; font-size: 12px; text-align: center;
@@ -314,6 +321,12 @@
 </div>
 
 <div class="card">
+  <h3>وصل الأمانة من النظام</h3>
+  <p style="font-size:12px; color:var(--muted); margin:0 0 8px;">صدّر ملف XML للبيان من النظام، وافتح الصفحة هذي عشان تطبع وصل الأمانة جاهز.</p>
+  <a href="receipt.html" target="_blank" rel="noopener" style="display:block; text-align:center; padding:12px; border-radius:10px; background:var(--navy); color:#fff; font-weight:bold; text-decoration:none;">طباعة وصل أمانة من ملف XML</a>
+</div>
+
+<div class="card">
   <h3>مسح المستندات</h3>
   <div class="scan-panel" id="waybill">
     <label for="waybillScan">بوليصة الشحن</label>
@@ -361,6 +374,22 @@
   <div id="imgList"></div>
 </div>
 
+<div class="card" id="phoneLink">
+  <h3>التصوير من الجوال</h3>
+  <p style="font-size:12px; color:var(--muted); margin:0 0 8px;">امسح الرمز بكاميرا الجوال، وصوّر أو وقّع من الجوال، وكل شي يوصل هني على طول. الصور تبقى ٥ أيام وبعدين تنمسح تلقائياً.</p>
+  <button type="button" id="phoneLinkBtn" onclick="openPhoneLink()">ربط الجوال (QR)</button>
+  <div id="phoneLinkBox" hidden>
+    <div id="phoneQr" style="display:flex; justify-content:center; margin:12px 0;"></div>
+    <div id="phoneLinkInfo" style="font-size:12px; color:var(--muted); text-align:center;"></div>
+    <div id="phonePool" class="phone-pool"></div>
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <button type="button" id="phoneAddAll" onclick="addAllPhonePhotos()" disabled style="flex:1;">إضافة كل الصور للإفادة</button>
+      <button type="button" onclick="newPhoneLink()" style="flex:1; background:#fff; color:var(--navy); border:1.5px solid #dfe3ea;">رمز جديد</button>
+    </div>
+  </div>
+  <div id="phoneLinkStatus" style="font-size:12px; margin-top:6px;"></div>
+</div>
+
 <div class="card">
   <button id="generateBtn" onclick="generatePdf()">توليد الإفادة PDF</button>
   <div id="statusMsg"></div>
@@ -384,9 +413,10 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getFirestore, addDoc, collection, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { getFirestore, addDoc, collection, serverTimestamp, doc, setDoc, getDoc, onSnapshot, query, orderBy, Timestamp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { createEmployeeAuth, employeeAuthErrorMessage } from './employee-auth.js';
 
 const firebaseConfig = {
@@ -1463,6 +1493,7 @@ function applyIdentity(identity, metadata = {}) {
 }
 
 function clearSessionView() {
+  stopPhoneLink();
   stopDocumentCamera();
   stopAwbScan();
   viewVersion++;
@@ -1554,6 +1585,7 @@ function renderImgList() {
 function removeImg(idx) {
   uploadedImages.splice(idx, 1);
   renderImgList();
+  if (phoneItems.length) renderPhonePool();
 }
 
 function todayArabicDateTime() {
@@ -1966,9 +1998,144 @@ function loadImage(src) {
     img.src = src;
   });
 }
+// ---------- Phone link: photos and signature sent from a phone via QR code ----------
+const PHONE_LINK_DAYS = 5;
+let phoneUnsub = null;
+let phoneSessionId = null;
+let phoneItems = [];          // { id, kind, data, used }
+
+function phoneStorageKey(uid) { return 'ifadaPhoneSession:' + uid; }
+function randomSessionId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes, b => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[b % 62]).join('');
+}
+function phoneStatus(msg, isError) {
+  const el = document.getElementById('phoneLinkStatus');
+  el.textContent = msg || '';
+  el.style.color = isError ? '#b91c1c' : 'var(--muted)';
+}
+function stopPhoneLink() {
+  if (phoneUnsub) { phoneUnsub(); phoneUnsub = null; }
+  phoneSessionId = null;
+  phoneItems = [];
+  const box = document.getElementById('phoneLinkBox');
+  if (box) {
+    box.hidden = true;
+    document.getElementById('phoneQr').innerHTML = '';
+    document.getElementById('phonePool').innerHTML = '';
+    document.getElementById('phoneLinkBtn').hidden = false;
+    phoneStatus('');
+  }
+}
+
+async function ensurePhoneSession(forceNew) {
+  const identity = currentIdentity;
+  if (!identity) throw new Error('سجّل دخول أول');
+  const key = phoneStorageKey(identity.uid);
+  if (!forceNew) {
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || 'null');
+      if (saved && saved.expires > Date.now() + 60 * 60 * 1000) {
+        const snap = await getDoc(doc(db, 'phoneSessions', saved.id)).catch(() => null);
+        if (snap && snap.exists()) return saved;
+      }
+    } catch {}
+  }
+  const id = randomSessionId();
+  const expires = Date.now() + PHONE_LINK_DAYS * 24 * 60 * 60 * 1000 - 60 * 1000;
+  await setDoc(doc(db, 'phoneSessions', id), {
+    ownerUid: identity.uid,
+    createdAt: serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(expires)
+  });
+  const saved = { id, expires };
+  try { localStorage.setItem(key, JSON.stringify(saved)); } catch {}
+  return saved;
+}
+
+async function openPhoneLink(forceNew = false) {
+  const version = viewVersion;
+  phoneStatus('جاري تجهيز الرمز…');
+  try {
+    const session = await ensurePhoneSession(forceNew);
+    if (version !== viewVersion || !currentIdentity) return;
+    stopPhoneLink();
+    phoneSessionId = session.id;
+    const url = new URL('phone.html', location.href);
+    url.hash = session.id;
+    const qr = document.getElementById('phoneQr');
+    qr.innerHTML = '';
+    new QRCode(qr, { text: url.href, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+    const until = new Date(session.expires).toLocaleDateString('ar-BH-u-nu-latn', { weekday: 'long', day: 'numeric', month: 'numeric' });
+    document.getElementById('phoneLinkInfo').textContent = 'الرمز صالح لين ' + until + '. اضغط على أي صورة عشان تضيفها للإفادة.';
+    document.getElementById('phoneLinkBox').hidden = false;
+    document.getElementById('phoneLinkBtn').hidden = true;
+    phoneStatus('بانتظار الصور من الجوال…');
+    const sessionId = session.id;
+    phoneUnsub = onSnapshot(
+      query(collection(db, 'phoneSessions', sessionId, 'items'), orderBy('createdAt', 'asc')),
+      snap => {
+        if (sessionId !== phoneSessionId) return;
+        phoneItems = snap.docs.map(d => ({ id: d.id, kind: d.data().kind, data: d.data().data, used: false }));
+        renderPhonePool();
+        const photos = phoneItems.filter(i => i.kind === 'photo').length;
+        const sigs = phoneItems.filter(i => i.kind === 'signature').length;
+        phoneStatus(photos || sigs ? `وصل من الجوال: ${photos} صورة${sigs ? ' و' + sigs + ' توقيع' : ''}` : 'بانتظار الصور من الجوال…');
+      },
+      error => { console.error(error); phoneStatus('انقطع الاتصال بالجوال. اضغط "رمز جديد" وجرب مرة ثانية.', true); }
+    );
+  } catch (error) {
+    console.error(error);
+    phoneStatus('ما قدرت أجهز الرمز: ' + (error.message || error), true);
+  }
+}
+function newPhoneLink() { openPhoneLink(true); }
+
+function renderPhonePool() {
+  const pool = document.getElementById('phonePool');
+  pool.innerHTML = '';
+  phoneItems.forEach(item => {
+    item.used = item.kind === 'photo' ? uploadedImages.includes(item.data) : currentSignature === item.data;
+  });
+  phoneItems.slice().reverse().forEach(item => {
+    const fig = document.createElement('figure');
+    fig.className = (item.kind === 'signature' ? 'sig ' : '') + (item.used ? 'used' : '');
+    const img = document.createElement('img');
+    img.src = item.data;
+    img.alt = item.kind === 'signature' ? 'توقيع من الجوال' : 'صورة من الجوال';
+    const cap = document.createElement('figcaption');
+    cap.textContent = item.used ? '✓ مضافة' : (item.kind === 'signature' ? 'استخدم التوقيع' : 'إضافة');
+    fig.append(img, cap);
+    fig.onclick = () => usePhoneItem(item);
+    pool.appendChild(fig);
+  });
+  document.getElementById('phoneAddAll').disabled = !phoneItems.some(i => i.kind === 'photo' && !i.used);
+}
+
+function usePhoneItem(item) {
+  if (!currentIdentity) return;
+  if (item.kind === 'signature') {
+    clearSignature();
+    currentSignature = item.data;
+    const preview = document.getElementById('sigPreview');
+    preview.src = item.data;
+    preview.hidden = false;
+    document.getElementById('sigStatus').textContent = 'تم استخدام التوقيع المرسل من الجوال ✓';
+  } else {
+    if (uploadedImages.includes(item.data)) return;
+    uploadedImages.push(item.data);
+    renderImgList();
+  }
+  renderPhonePool();
+}
+function addAllPhonePhotos() {
+  phoneItems.filter(i => i.kind === 'photo' && !uploadedImages.includes(i.data)).forEach(usePhoneItem);
+}
+
 // Module declarations are not globals; preserve every existing inline handler.
 Object.assign(window, { normalizeDigits, toggleShipmentType, lookupEmployee, submitEmployeeLogin,
-  resetLoginRoute, logout, clearSignature, handleSignatureFile, handlePhotos, removeImg, generatePdf });
+  resetLoginRoute, logout, clearSignature, handleSignatureFile, handlePhotos, removeImg, generatePdf,
+  openPhoneLink, newPhoneLink, addAllPhonePhotos });
 employeeAuth.watch(applyIdentity, error => setLoginStatus(employeeAuthErrorMessage(error) + (retainedIdentity ? ' بيانات الإفادة غير المحفوظة باقية في هذه الصفحة حتى التحقق من نفس الحساب.' : ''), true));
 </script>
 

@@ -229,6 +229,41 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Phone link: the computer (signed-in employee) opens a session and shows its ID as a QR code.
+    // The phone, which knows the unguessable session ID, may only ADD photos/signatures to it.
+    // Everything expires after 5 days (TTL policy on `expiresAt` deletes the documents).
+    function phoneSession(sid) { return get(/databases/$(database)/documents/phoneSessions/$(sid)).data; }
+    function liveSession(sid) {
+      return exists(/databases/$(database)/documents/phoneSessions/$(sid))
+        && phoneSession(sid).expiresAt > request.time;
+    }
+    match /phoneSessions/{sid} {
+      allow create: if (activeEmployee() || owner())
+        && sid.matches('^[A-Za-z0-9]{24,64}$')
+        && request.resource.data.keys().hasOnly(['ownerUid', 'createdAt', 'expiresAt'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt <= request.time + duration.value(5, 'd');
+      allow get: if resource.data.expiresAt > request.time;
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      allow list, update: if false;
+
+      match /items/{itemId} {
+        allow create: if liveSession(sid)
+          && request.resource.data.keys().hasOnly(['kind', 'data', 'createdAt', 'expiresAt'])
+          && request.resource.data.kind in ['photo', 'signature']
+          && request.resource.data.data is string
+          && request.resource.data.data.size() <= 950000
+          && request.resource.data.data.matches('^data:image/(png|jpeg);base64,.*$')
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.expiresAt == phoneSession(sid).expiresAt;
+        allow read, delete: if signedIn() && liveSession(sid)
+          && phoneSession(sid).ownerUid == request.auth.uid;
+        allow update: if false;
+      }
+    }
+
     match /{document=**} { allow read, write: if false; }
   }
 }
