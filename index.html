@@ -93,7 +93,10 @@
   }
   .awb-scan-button { margin-top: 7px; padding: 7px 10px; border: 1px solid #dfe3ea; border-radius: 8px; background: #fff; color: var(--navy); font: inherit; font-size: 12px; }
   #awbScanner { margin-top: 12px; }
-  #awbVideo { display: block; width: 100%; max-height: 280px; background: #0e1a38; border-radius: 10px; }
+  .awb-viewfinder { position: relative; overflow: hidden; border-radius: 10px; background: #0e1a38; }
+  #awbVideo { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; }
+  .awb-guide { position: absolute; inset: 37% 7%; border: 2px solid #fff; border-radius: 8px; box-shadow: 0 0 0 100vmax rgb(0 0 0 / 35%); pointer-events: none; }
+  .awb-guide::after { content: ''; position: absolute; top: 50%; left: 0; right: 0; border-top: 2px dashed #ffbf47; transform: translateY(-50%); }
   #awbScanStatus { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
   #awbScanStatus:empty { margin: 0; }
   .scan-panel + .scan-panel { margin-top: 16px; }
@@ -106,6 +109,7 @@
   .scan-tilt output { direction: ltr; unicode-bidi: isolate; }
   .scan-panel [role=status] { font-size: 12px; margin: 6px 0; }
   .scan-panel button { margin: 3px; padding: 7px; }
+  #sigOpacity { display: block; width: 100%; accent-color: var(--navy); }
   #sigPreview { display: block; max-width: 100%; max-height: 72px; margin-top: 8px; }
   #generateBtn {
     width: 100%; padding: 16px; font-size: 15.5px; font-weight: bold;
@@ -211,7 +215,10 @@
   </div>
 
   <div id="awbScanner" hidden>
-    <video id="awbVideo" autoplay playsinline muted aria-label="معاينة كاميرا الباركود"></video>
+    <div class="awb-viewfinder">
+      <video id="awbVideo" autoplay playsinline muted aria-label="معاينة كاميرا الباركود"></video>
+      <div class="awb-guide" aria-hidden="true"></div>
+    </div>
     <button type="button" id="awbCloseScanner" class="awb-scan-button">إغلاق الكاميرا</button>
   </div>
   <p id="awbScanStatus" role="status"></p>
@@ -283,6 +290,8 @@
   <label>أو ارفع صورة التوقيع</label>
   <input type="file" accept="image/*" id="sigFileInput" onchange="handleSignatureFile(event)">
   <img id="sigPreview" alt="معاينة التوقيع بعد إزالة الخلفية" hidden>
+  <label for="sigOpacity">شفافية التوقيع <output id="sigOpacityValue" for="sigOpacity" dir="ltr">0%</output></label>
+  <input id="sigOpacity" type="range" min="0" max="90" step="5" value="0" dir="ltr">
   <div id="sigStatus" style="font-size:12px; margin-top:6px;"></div>
 </div>
 
@@ -814,6 +823,19 @@ function initSignaturePad() {
   canvas.addEventListener('touchend', end);
 }
 
+const signatureOpacityInput = document.getElementById('sigOpacity');
+
+function updateSignatureOpacity() {
+  const transparency = Number(signatureOpacityInput.value);
+  const opacity = 1 - transparency / 100;
+  document.getElementById('sigOpacityValue').textContent = transparency + '%';
+  document.getElementById('sigCanvas').style.opacity = opacity;
+  document.getElementById('sigPreview').style.opacity = opacity;
+  return opacity;
+}
+
+signatureOpacityInput.addEventListener('input', updateSignatureOpacity);
+
 function clearSignature() {
   signatureVersion++;
   signatureBusy = false;
@@ -923,6 +945,15 @@ function makeAwbReader(zxing) {
   return reader;
 }
 
+function awbScanRegion(videoWidth, videoHeight) {
+  // Match the centered 4:3 object-fit crop and the guide's 7% side insets.
+  const visibleWidth = Math.min(videoWidth, videoHeight * 4 / 3);
+  const visibleHeight = Math.min(videoHeight, videoWidth * 3 / 4);
+  const width = Math.max(1, Math.floor(visibleWidth * 0.86));
+  const height = Math.max(1, Math.floor(visibleHeight * 0.02));
+  return { x: Math.floor((videoWidth - width) / 2), y: Math.floor((videoHeight - height) / 2), width, height };
+}
+
 function readAwbBarcode(zxing, reader, canvas) {
   const source = new zxing.HTMLCanvasElementLuminanceSource(canvas);
   const bitmap = new zxing.BinaryBitmap(new zxing.HybridBinarizer(source));
@@ -959,7 +990,7 @@ function stopAwbScan(message = '') {
 async function startAwbScan() {
   if (!currentIdentity || awbScan) return;
   if (!navigator.mediaDevices?.getUserMedia) {
-    awbScanStatus.textContent = 'الكاميرا المباشرة غير متاحة. جرّب «قراءة من صورة».';
+    awbScanStatus.textContent = 'الكاميرا غير متاحة في هذا المتصفح. اكتب رقم البوليصة يدويًا.';
     return;
   }
   awbPhotoVersion++;
@@ -986,8 +1017,8 @@ async function startAwbScan() {
   } catch (error) {
     if (awbScan === scan) {
       stopAwbScan(error.name === 'NotAllowedError'
-        ? 'اسمح بالكاميرا من إعدادات المتصفح أو جرّب «قراءة من صورة».'
-        : 'تعذر تشغيل الكاميرا المباشرة. جرّب «قراءة من صورة».');
+        ? 'اسمح باستخدام الكاميرا من إعدادات المتصفح أو اكتب الرقم يدويًا.'
+        : 'تعذر تشغيل قارئ الباركود. جرّب مرة ثانية أو اكتب الرقم يدويًا.');
     }
     return;
   }
@@ -996,24 +1027,24 @@ async function startAwbScan() {
   const reader = makeAwbReader(zxing);
   const frame = document.createElement('canvas');
   const ctx = frame.getContext('2d', { willReadFrequently: true });
-  awbScanStatus.textContent = 'وجّه الكاميرا إلى الباركود الطولي على البوليصة.';
+  awbScanStatus.textContent = 'خلّ الخط المتقطع يمر بوسط الباركود المطلوب، وخله داخل الإطار بالكامل.';
 
   function scanFrame() {
     if (awbScan !== scan || !currentIdentity) return;
     if (awbVideo.readyState >= 2 && awbVideo.videoWidth && awbVideo.videoHeight) {
       try {
-        const scale = Math.min(1, 1000 / Math.max(awbVideo.videoWidth, awbVideo.videoHeight));
-        const width = Math.max(1, Math.round(awbVideo.videoWidth * scale));
-        const height = Math.max(1, Math.round(awbVideo.videoHeight * scale));
+        const region = awbScanRegion(awbVideo.videoWidth, awbVideo.videoHeight);
+        const width = region.width;
+        const height = region.height;
         if (frame.width !== width || frame.height !== height) {
           frame.width = width;
           frame.height = height;
         }
-        ctx.drawImage(awbVideo, 0, 0, width, height);
+        ctx.drawImage(awbVideo, region.x, region.y, width, height, 0, 0, width, height);
         const value = readAwbBarcode(zxing, reader, frame);
         if (value) return acceptAwbBarcode(value);
       } catch (error) {
-        if (!isAwbReadError(zxing, error)) {
+        if (!(error instanceof zxing.NotFoundException) && !(error instanceof zxing.ChecksumException) && !(error instanceof zxing.FormatException)) {
           stopAwbScan('توقف قارئ الباركود. جرّب مرة ثانية أو اكتب الرقم يدويًا.');
           return;
         }
@@ -1198,9 +1229,11 @@ function clearSessionView() {
   renderImgList();
   for (const input of document.querySelectorAll('#formArea input, #formArea textarea, #formArea select')) {
     if (['checkbox', 'radio'].includes(input.type)) input.checked = input.defaultChecked;
+    else if (input === signatureOpacityInput) input.value = input.defaultValue;
     else if (input.tagName === 'SELECT') input.selectedIndex = 0;
     else input.value = '';
   }
+  updateSignatureOpacity();
   toggleShipmentType();
   document.getElementById('regakuBox').style.display = 'none';
   document.getElementById('k9Box').style.display = 'none';
@@ -1290,7 +1323,7 @@ function todayArabicDateTime() {
   };
 }
 
-function buildTemplate(data, dt) {
+function buildTemplate(data, dt, signatureOpacity = 1) {
   data = { ...data }; // Render a safe copy; form values must never become live markup.
   const escapeText = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   // Fix for a html2canvas Arabic-shaping bug: a digit directly touching an
@@ -1377,7 +1410,7 @@ function buildTemplate(data, dt) {
       <div style="display:inline-flex; align-items:center; gap:10px;">
         <span>التوقيع:</span>
         ${data.signature
-          ? `<img src="${data.signature}" style="height:50px;max-width:220px;object-fit:contain;">`
+          ? `<img src="${data.signature}" style="height:50px;max-width:220px;object-fit:contain;opacity:${signatureOpacity};">`
           : `<div style="border-bottom:1px solid #333; width:170px; height:36px;"></div>`}
       </div>
     </div>
@@ -1456,7 +1489,7 @@ async function generatePdf() {
   holder.style.position = 'fixed';
   holder.style.top = '-9999px';
   holder.style.left = '-9999px';
-  holder.innerHTML = buildTemplate(data, dt);
+  holder.innerHTML = buildTemplate(data, dt, updateSignatureOpacity());
   document.body.appendChild(holder);
 
   try {
