@@ -1028,6 +1028,11 @@ function initSignaturePad() {
     sigDrawing = true;
     const p = getPos(e);
     sigLastX = p.x; sigLastY = p.y;
+    // Draw a dot right away so a single tap (e.g. the dot in a signature) shows up.
+    sigCtx.beginPath();
+    sigCtx.arc(p.x, p.y, sigCtx.lineWidth / 2, 0, Math.PI * 2);
+    sigCtx.fillStyle = sigCtx.strokeStyle;
+    sigCtx.fill();
     e.preventDefault();
   }
   function move(e) {

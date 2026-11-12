@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="logo.png">
+<title>وصل أمانة - من ملف XML</title>
+<style>
+  :root { --navy:#16264d; --gold:#c9a24a; --bg:#eef1f6; --muted:#6b7280; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); font-family: Tahoma, Arial, sans-serif; color:#1c2333; }
+
+  /* ---------- screen controls ---------- */
+  .controls { max-width: 820px; margin: 16px auto; background:#fff; border-radius:14px; padding:16px; box-shadow:0 2px 10px rgba(0,0,0,.06); }
+  .controls h2 { margin:0 0 10px; color:var(--navy); font-size:18px; }
+  .controls label { display:block; font-weight:bold; font-size:13px; margin:10px 0 4px; }
+  .controls input, .controls select { width:100%; padding:10px; border:1.5px solid #dfe3ea; border-radius:10px; font-size:15px; }
+  .controls .row { display:flex; gap:10px; }
+  .controls .row > div { flex:1; }
+  .controls button { width:100%; margin-top:14px; padding:13px; border:0; border-radius:10px; background:var(--navy); color:#fff; font-size:16px; font-weight:bold; cursor:pointer; }
+  .controls button:disabled { opacity:.45; }
+  .controls .hint { font-size:12px; color:var(--muted); margin-top:6px; }
+  .controls .back { display:inline-block; margin-bottom:8px; font-size:13px; color:var(--navy); }
+  #status { font-size:13px; margin-top:8px; }
+  .page-wrap { overflow-x:auto; padding: 0 0 24px; }
+
+  /* ---------- the A4 receipt ---------- */
+  .page { width:210mm; min-height:297mm; margin:0 auto; background:#fff; padding:14mm 9mm; position:relative;
+          font-family: Calibri, Carlito, "Segoe UI", Arial, sans-serif; color:#000; direction:ltr; }
+  .box { border:1px solid #bbb; padding: 9mm 7mm 12mm; min-height: 255mm; }
+  .hdr { display:block; width:100%; }
+  .title { text-align:center; margin:3mm 0 4mm; line-height:1.25; }
+  .title .ar { font-family: Arial, sans-serif; font-size:14pt; }
+  .title .en { font-size:12pt; }
+
+  .line { display:flex; align-items:flex-end; gap:1.5mm; margin: 0 0 6mm; font-size:10.5pt; white-space:nowrap; }
+  .line .lbl { flex:none; }
+  .line .ar { flex:none; direction:rtl; font-family: Arial, sans-serif; font-size:10pt; }
+  .line .val { flex:1 1 0; min-width:6mm; border-bottom:1px dotted #444; padding:0 1mm; font-family: Arial, sans-serif;
+               font-weight:bold; font-size:11pt; outline:none; overflow:hidden; text-overflow:clip; }
+  .line .val.small { flex: 0 1 26mm; }
+  .line .val.rtl { direction:rtl; text-align:right; }
+  .line .fill { flex:1 1 0; border-bottom:1px dotted #444; }
+  .portval { position:relative; overflow:visible !important; }
+  .portval .above { position:absolute; left:1mm; bottom:100%; font-size:11pt; font-weight:bold; }
+  .reason-above { text-align:center; font-family:Arial, sans-serif; font-weight:bold; font-size:11pt; margin:-5.5mm 0 1mm; padding-left:30mm; }
+
+  .warn { display:flex; gap:8mm; margin-top: 30mm; font-size:10.5pt; color:#444; }
+  .warn > div { flex:1; }
+  .warn h4 { margin:0 0 2mm; font-weight:normal; text-decoration:underline; font-size:11pt; }
+  .warn ol { margin:0; padding-left:5mm; line-height:1.45; }
+  .warn .ar-col { direction:rtl; font-family: Arial, sans-serif; font-size:10pt; text-align:right; }
+  .warn .ar-col h4 { text-align:right; }
+  .warn .ar-col ol { padding-left:0; padding-right:5mm; }
+
+  .foot { margin-top:8mm; }
+  .foot .line { font-weight:bold; font-size:10pt; }
+  .stamps { display:flex; justify-content:space-between; direction:rtl; font-family:Arial, sans-serif; font-weight:bold; font-size:10pt; padding: 0 4mm; }
+
+  @media print {
+    @page { size: A4 portrait; margin: 0; }
+    body { background:#fff; }
+    .controls { display:none !important; }
+    .page-wrap { padding:0; overflow:visible; }
+    .page { margin:0; box-shadow:none; }
+  }
+  @media screen { .page { box-shadow:0 2px 14px rgba(0,0,0,.12); } }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <a class="back" href="./">← رجوع لمولّد الإفادات</a>
+  <h2>وصل أمانة من ملف XML</h2>
+  <label for="xmlFile">ملف XML المصدَّر من النظام</label>
+  <input type="file" id="xmlFile" accept=".xml,text/xml,application/xml">
+  <div class="row">
+    <div>
+      <label for="reasonSel">سبب الحجز</label>
+      <select id="reasonSel"></select>
+      <input type="text" id="reasonOther" placeholder="اكتب الكود والسبب، مثال: 1310 - Ministry of Interior - Confiscation" hidden>
+    </div>
+    <div>
+      <label for="seal">رقم السيل</label>
+      <input type="text" id="seal" inputmode="numeric" lang="en" dir="ltr">
+    </div>
+  </div>
+  <button id="printBtn" type="button" disabled>طباعة الوصل</button>
+  <div id="status"></div>
+  <div class="hint">تقدر تعدّل أي خانة بالضغط عليها في الوصل تحت قبل الطباعة.</div>
+</div>
+
+<div class="page-wrap">
+<div class="page" id="page">
+  <div class="box">
+    <img class="hdr" src="receipt-header.png" alt="Kingdom of Bahrain - Ministry of Interior - Customs Affairs">
+    <div class="title"><div class="ar">وصل أمـانـة</div><div class="en">RECEIPT</div></div>
+
+    <div class="line" style="margin-top:9mm">
+      <span class="lbl">Reference:&nbsp; Date:</span>
+      <span class="val small" contenteditable data-f="date"></span>
+      <span class="ar">:التاريخ</span>
+      <span class="lbl">No.:</span>
+      <span class="val small" contenteditable data-f="no"></span>
+      <span class="ar">:الرقم</span>
+      <span class="lbl">Port:</span>
+      <span class="val portval" data-f="port-wrap"><span class="above" contenteditable data-f="portTop"></span><span contenteditable data-f="portBottom"></span></span>
+      <span class="ar">:المنفذ</span>
+      <span class="ar">&nbsp;&nbsp;:مرجع الايصال</span>
+    </div>
+
+    <div class="line">
+      <span class="lbl">Name of Depositor:</span>
+      <span class="val" contenteditable data-f="name"></span>
+      <span class="ar">:إسم المودع</span>
+    </div>
+
+    <div class="line">
+      <span class="lbl">Passport No:</span>
+      <span class="val" contenteditable data-f="passport"></span>
+      <span class="ar">:رقم جواز السفر</span>
+      <span class="lbl">Nationality:</span>
+      <span class="val" contenteditable data-f="nationality"></span>
+      <span class="ar">:الجنسية</span>
+    </div>
+
+    <div class="line">
+      <span class="lbl">Vessel of Trip:</span>
+      <span class="val" contenteditable data-f="vessel"></span>
+      <span class="ar">:وسيلة النقل/الرحلة</span>
+      <span class="lbl">Country of Arrival:</span>
+      <span class="val" contenteditable data-f="country"></span>
+      <span class="ar">:بلد القدوم</span>
+    </div>
+
+    <div class="line">
+      <span class="lbl">Address and Tel. No.:</span>
+      <span class="val" contenteditable data-f="address"></span>
+      <span class="ar">:العنوان ورقم الهاتف</span>
+    </div>
+
+    <div class="line">
+      <span class="lbl">Description of goods:</span>
+      <span class="val rtl" contenteditable data-f="goods"></span>
+      <span class="ar">:تعريف البضاعة</span>
+      <span class="lbl">No. of packages:</span>
+      <span class="val small" contenteditable data-f="packages"></span>
+      <span class="ar">:عدد الطرود</span>
+    </div>
+
+    <div class="reason-above" contenteditable data-f="reason"></div>
+    <div class="line">
+      <span class="lbl">Reason for Detention:</span>
+      <span class="val" contenteditable data-f="sealLine"></span>
+      <span class="ar">:سبب الحجز</span>
+    </div>
+
+    <div class="warn">
+      <div>
+        <h4>WARNING</h4>
+        <ol>
+          <li>This receipt must be retained to submit to customs on receiving of goods. Non submission may delay or prevent return of good/s.</li>
+          <li>Customs must be notified immediately on loss.</li>
+          <li>Reference to customs authorities essential for delivery to other original depositor.</li>
+          <li>Goods not withdrawn within 3 months from date of depositing are liable to disposal by customs.</li>
+        </ol>
+      </div>
+      <div class="ar-col">
+        <h4>تنبيــــه</h4>
+        <ol>
+          <li>يحتفظ بهذا الإيصال لتقديمه للسلطات الجمركية عند الاستلام. عدم التقديم قد يؤخر أو يمنع تسليم البضاعة.</li>
+          <li>تشعر الجمارك فوراً في حال الفقدان.</li>
+          <li>مراجعة السلطات الجمركية بواسطة المودع في حالة النيه للتسليم لشخص آخر غير المودع الأصلي.</li>
+          <li>البضائع التي لا تسحب في موعد أقصاه 3 شهور من تاريخ إيداعها تكون قابلة للتصرف فيها من قبل الجمارك.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="foot">
+      <div class="line"><span class="lbl">To be delivered to:</span><span class="fill"></span><span class="ar">:تسلم البضاعة الى</span></div>
+      <div class="line"><span class="lbl">Signature:</span><span class="fill"></span><span class="lbl">Date:</span><span class="fill"></span><span class="ar">:التاريخ</span><span class="fill"></span><span class="ar">:إمضاء</span></div>
+      <div class="line"><span class="fill"></span><span class="ar">:الإمضاء</span><span class="fill"></span><span class="ar">:بحضور ضابط الجمارك</span></div>
+      <div class="stamps"><span>:الختم</span><span>:المستلم</span><span>:تاريخ التسليم</span></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+const REASONS = [
+  '1310 - Ministry of Interior - Confiscation'
+];
+const OTHER = '__other__';
+const $ = s => document.querySelector(s);
+const field = f => document.querySelector(`[data-f="${f}"]`);
+
+const sel = $('#reasonSel');
+REASONS.forEach(r => sel.add(new Option(r, r)));
+sel.add(new Option('سبب آخر (اكتبه يدوياً)…', OTHER));
+
+function text(doc, path) {
+  // path like "Passenger/FirstName"; returns trimmed text of first match or ''
+  let node = doc.documentElement;
+  for (const part of path.split('/')) {
+    node = node && Array.from(node.children).find(c => c.tagName === part);
+  }
+  return node ? node.textContent.trim() : '';
+}
+
+function formatDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+}
+
+function updateReason() {
+  const other = sel.value === OTHER;
+  $('#reasonOther').hidden = !other;
+  field('reason').textContent = other ? $('#reasonOther').value.trim() : sel.value;
+}
+function updateSeal() {
+  const seal = $('#seal').value.trim();
+  field('sealLine').textContent = seal ? `, seal:${seal}, ,` : '';
+}
+sel.onchange = updateReason;
+$('#reasonOther').oninput = updateReason;
+$('#seal').oninput = updateSeal;
+
+$('#xmlFile').onchange = async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const status = $('#status');
+  try {
+    const doc = new DOMParser().parseFromString(await file.text(), 'application/xml');
+    if (doc.querySelector('parsererror') || doc.documentElement.tagName !== 'TWM_PBSAD') {
+      throw new Error('الملف مو بصيغة البيان المتوقعة');
+    }
+    const serial = text(doc, 'Identification/Registration/Serial_number');
+    const number = text(doc, 'Identification/Registration/Number');
+    const values = {
+      date: formatDate(text(doc, 'Identification/Registration/Date')),
+      no: [serial, number].filter(Boolean).join(' '),
+      portTop: [text(doc, 'Identification/Office_segment/Customs_clearance_office_code'),
+                text(doc, 'Identification/Office_segment/Customs_Clearance_office_name').replace(/\s*-?\s*DHL\s*$/i, '')]
+               .filter(Boolean).join(' - ') + ' -',
+      portBottom: (text(doc, 'Identification/Office_segment/Customs_Clearance_office_name').match(/DHL\s*$/i) || [''])[0].trim()
+                  || '',
+      name: text(doc, 'Passenger/FirstName'),
+      passport: text(doc, 'Passenger/PassportNumber'),
+      nationality: text(doc, 'Passenger/Nationality'),
+      vessel: text(doc, 'Transport/Means_of_transport/Border_information/Identity'),
+      country: text(doc, 'General_information/Country/Export/Export_country_name'),
+      address: text(doc, 'Passenger/Address').split(/\r?\n/)[0].trim(),
+      goods: text(doc, 'Item/Goods/Description_of_goods'),
+      packages: text(doc, 'Property/Nbers/Total_number_of_packages') || text(doc, 'Item/Packages/Number_of_packages'),
+    };
+    // If the office name does not end with DHL, show the whole port on one line.
+    if (!values.portBottom) {
+      values.portBottom = values.portTop.replace(/ -$/, '');
+      values.portTop = '';
+    }
+    for (const [k, v] of Object.entries(values)) field(k).textContent = v;
+    updateReason();
+    updateSeal();
+    $('#printBtn').disabled = false;
+    status.style.color = '#15803d';
+    status.textContent = `تم قراءة البيان ${values.no} ✓ اكتب رقم السيل وتأكد من سبب الحجز، بعدين اطبع.`;
+  } catch (err) {
+    status.style.color = '#b91c1c';
+    status.textContent = 'ما قدرت أقرا الملف: ' + err.message;
+  }
+};
+
+$('#printBtn').onclick = () => {
+  if (!$('#seal').value.trim() && !confirm('رقم السيل فاضي. تبي تطبع بدونه؟')) return;
+  window.print();
+};
+updateReason();
+</script>
+</body>
+</html>
