@@ -86,6 +86,7 @@
   #imgList { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
   #imgList img { width: 72px; height: 72px; object-fit: cover; border-radius: 10px; border: 1px solid #ddd; }
   .imgWrap { position: relative; }
+  .xml-box { background:#f6f7f9; border-radius:10px; padding:4px 10px 10px; margin:8px 0; }
   .phone-pool { display:grid; grid-template-columns:repeat(auto-fill, minmax(84px, 1fr)); gap:8px; margin-top:10px; }
   .phone-pool figure { margin:0; position:relative; border:1.5px solid #dfe3ea; border-radius:8px; overflow:hidden; background:#fff; cursor:pointer; }
   .phone-pool img { display:block; width:100%; aspect-ratio:1; object-fit:cover; }
@@ -321,12 +322,6 @@
 </div>
 
 <div class="card">
-  <h3>وصل الأمانة من النظام</h3>
-  <p style="font-size:12px; color:var(--muted); margin:0 0 8px;">صدّر ملف XML للبيان من النظام، وافتح الصفحة هذي عشان تطبع وصل الأمانة جاهز.</p>
-  <a href="receipt.html" target="_blank" rel="noopener" style="display:block; text-align:center; padding:12px; border-radius:10px; background:var(--navy); color:#fff; font-weight:bold; text-decoration:none;">طباعة وصل أمانة من ملف XML</a>
-</div>
-
-<div class="card">
   <h3>مسح المستندات</h3>
   <div class="scan-panel" id="waybill">
     <label for="waybillScan">بوليصة الشحن</label>
@@ -349,6 +344,16 @@
   </div>
   <div class="scan-panel" id="receipt">
     <label for="receiptScan">وصل الأمانة</label>
+    <button type="button" id="receiptXmlBtn" data-xml-receipt>إنشاء الوصل من ملف XML</button>
+    <input id="receiptXmlFile" type="file" accept=".xml,text/xml,application/xml" hidden>
+    <div id="receiptXmlBox" class="xml-box" hidden>
+      <label for="receiptSeal">رقم السيل</label>
+      <input id="receiptSeal" type="text" inputmode="numeric" lang="en" dir="ltr">
+      <label for="receiptReason">سبب الحجز</label>
+      <select id="receiptReason"></select>
+      <input id="receiptReasonOther" type="text" dir="ltr" placeholder="مثال: 1310 - Ministry of Interior - Confiscation" hidden>
+      <a href="receipt.html" target="_blank" rel="noopener" style="display:inline-block; margin-top:6px; font-size:12px; color:var(--navy);">طباعة الوصل لوحده ↗</a>
+    </div>
     <button id="receiptScan" type="button" data-open-camera>مسح المستند</button>
     <button type="button" data-device-camera>التقاط من كاميرا الجهاز</button>
     <button type="button" data-pick-document>اختيار ملف من الجوال</button>
@@ -737,7 +742,7 @@ function renderScan(slot) {
   else slot.preview.width = slot.preview.height = 1;
   slot.editor.hidden = !slot.editing;
   slot.panel.querySelector('[data-edit]').hidden = !slot.source || slot.editing;
-  slot.panel.querySelector('[data-remove]').hidden = !slot.source && !slot.pdf && !slot.busy;
+  slot.panel.querySelector('[data-remove]').hidden = !slot.source && !slot.pdf && !slot.result && !slot.busy;
   slot.panel.querySelector('[data-cancel]').hidden = !slot.editing || !slot.result;
   if (!slot.editing) return;
   const scale = Math.min(1, 600 / Math.max(slot.source.width, slot.source.height));
@@ -784,6 +789,7 @@ function startCornerSelection(slot) {
 
 function clearScan(slot) {
   slot.version++;
+  if (slot.panel.id === 'receipt') resetReceiptXml();
   slot.source = slot.result = slot.pdf = null;
   slot.autoPoints = slot.appliedPoints = null;
   slot.angle = 0;
@@ -1998,6 +2004,116 @@ function loadImage(src) {
     img.src = src;
   });
 }
+// ---------- Deposit receipt (وصل الأمانة) built from the customs system XML ----------
+const receiptSlot = scanSlots.find(s => s.panel.id === 'receipt');
+const RECEIPT_OTHER = '__other__';
+let receiptXmlText = null;
+let receiptFrame = null;
+let receiptRenderVersion = 0;
+
+function resetReceiptXml() {
+  receiptXmlText = null;
+  receiptRenderVersion++;
+  const box = document.getElementById('receiptXmlBox');
+  if (box) box.hidden = true;
+}
+
+function receiptFrameReady() {
+  if (receiptFrame) return receiptFrame;
+  receiptFrame = new Promise((resolve, reject) => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.tabIndex = -1;
+    frame.style.cssText = 'position:fixed; left:-10000px; top:0; width:820px; height:1200px; border:0;';
+    frame.onload = () => {
+      const page = frame.contentWindow.ReceiptPage;
+      if (!page) return reject(new Error('receipt page missing'));
+      const select = document.getElementById('receiptReason');
+      if (!select.options.length) {
+        page.reasons.forEach(r => select.add(new Option(r, r)));
+        select.add(new Option('سبب آخر (اكتبه يدوياً)…', RECEIPT_OTHER));
+      }
+      resolve(frame);
+    };
+    frame.onerror = () => reject(new Error('receipt page failed to load'));
+    frame.src = 'receipt.html#embed';
+    document.body.appendChild(frame);
+  });
+  receiptFrame.catch(() => { receiptFrame = null; });
+  return receiptFrame;
+}
+
+function receiptReasonValue() {
+  const select = document.getElementById('receiptReason');
+  const other = select.value === RECEIPT_OTHER;
+  document.getElementById('receiptReasonOther').hidden = !other;
+  return other ? document.getElementById('receiptReasonOther').value.trim() : select.value;
+}
+
+async function renderReceiptFromXml() {
+  if (!receiptXmlText || !currentIdentity) return;
+  const version = ++receiptRenderVersion;
+  const ownerVersion = viewVersion;
+  const slot = receiptSlot;
+  slot.version++;
+  slot.busy = true;
+  slot.status.textContent = 'جاري تجهيز وصل الأمانة…';
+  renderScan(slot);
+  try {
+    const frame = await receiptFrameReady();
+    const page = frame.contentWindow.ReceiptPage;
+    const values = page.fill(receiptXmlText, {
+      seal: document.getElementById('receiptSeal').value.trim(),
+      reason: receiptReasonValue()
+    });
+    const doc = frame.contentDocument;
+    await Promise.all(Array.from(doc.images).map(im => im.complete ? null : new Promise(r => { im.onload = im.onerror = r; })));
+    if (doc.fonts) { try { await doc.fonts.ready; } catch {} }
+    const canvas = await html2canvas(page.element(), { scale: 2, backgroundColor: '#ffffff', windowWidth: 820 });
+    if (version !== receiptRenderVersion || ownerVersion !== viewVersion) return;
+    slot.pdf = null;
+    slot.source = null;
+    slot.result = canvas;
+    slot.autoPoints = slot.appliedPoints = null;
+    slot.angle = 0;
+    slot.editing = false;
+    slot.status.textContent = `وصل الأمانة جاهز من البيان ${values.no} ✓` +
+      (document.getElementById('receiptSeal').value.trim() ? '' : ' (رقم السيل فاضي)');
+    document.getElementById('att1').checked = true;
+  } catch (error) {
+    console.error(error);
+    if (version !== receiptRenderVersion) return;
+    slot.status.textContent = 'ما قدرت أقرا ملف الـ XML: ' + (error.message || error);
+  } finally {
+    if (version === receiptRenderVersion && ownerVersion === viewVersion) {
+      slot.busy = false;
+      renderScan(slot);
+    }
+  }
+}
+
+document.getElementById('receiptXmlBtn').onclick = () => document.getElementById('receiptXmlFile').click();
+document.getElementById('receiptXmlFile').onchange = async event => {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file || !currentIdentity) return;
+  receiptXmlText = await file.text();
+  document.getElementById('receiptXmlBox').hidden = false;
+  await receiptFrameReady().catch(() => null);
+  renderReceiptFromXml();
+};
+let receiptSealTimer = null;
+document.getElementById('receiptSeal').oninput = event => {
+  event.target.value = normalizeDigits(event.target.value);
+  clearTimeout(receiptSealTimer);
+  receiptSealTimer = setTimeout(renderReceiptFromXml, 500);
+};
+document.getElementById('receiptReason').onchange = renderReceiptFromXml;
+document.getElementById('receiptReasonOther').oninput = () => {
+  clearTimeout(receiptSealTimer);
+  receiptSealTimer = setTimeout(renderReceiptFromXml, 600);
+};
+
 // ---------- Phone link: photos and signature sent from a phone via QR code ----------
 const PHONE_LINK_DAYS = 5;
 let phoneUnsub = null;

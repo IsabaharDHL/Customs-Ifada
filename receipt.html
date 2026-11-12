@@ -70,6 +70,10 @@
     .page { margin:0; box-shadow:none; }
   }
   @media screen { .page { box-shadow:0 2px 14px rgba(0,0,0,.12); } }
+  html.embed body { background:#fff; }
+  html.embed .controls { display:none; }
+  html.embed .page { box-shadow:none; margin:0; }
+  html.embed .page-wrap { padding:0; }
 </style>
 </head>
 <body>
@@ -196,6 +200,7 @@
 </div>
 
 <script>
+if (location.hash === '#embed') document.documentElement.classList.add('embed');
 const REASONS = [
   '1310 - Ministry of Interior - Confiscation'
 ];
@@ -234,40 +239,62 @@ sel.onchange = updateReason;
 $('#reasonOther').oninput = updateReason;
 $('#seal').oninput = updateSeal;
 
+function parseReceiptXml(xmlText) {
+  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  if (doc.querySelector('parsererror') || doc.documentElement.tagName !== 'TWM_PBSAD') {
+    throw new Error('الملف مو بصيغة البيان المتوقعة');
+  }
+  const serial = text(doc, 'Identification/Registration/Serial_number');
+  const number = text(doc, 'Identification/Registration/Number');
+  const officeName = text(doc, 'Identification/Office_segment/Customs_Clearance_office_name');
+  const values = {
+    date: formatDate(text(doc, 'Identification/Registration/Date')),
+    no: [serial, number].filter(Boolean).join(' '),
+    portTop: [text(doc, 'Identification/Office_segment/Customs_clearance_office_code'),
+              officeName.replace(/\s*-?\s*DHL\s*$/i, '')].filter(Boolean).join(' - ') + ' -',
+    portBottom: ((officeName.match(/DHL\s*$/i) || [''])[0]).trim(),
+    name: text(doc, 'Passenger/FirstName'),
+    passport: text(doc, 'Passenger/PassportNumber'),
+    nationality: text(doc, 'Passenger/Nationality'),
+    vessel: text(doc, 'Transport/Means_of_transport/Border_information/Identity'),
+    country: text(doc, 'General_information/Country/Export/Export_country_name'),
+    address: text(doc, 'Passenger/Address').split(/\r?\n/)[0].trim(),
+    goods: text(doc, 'Item/Goods/Description_of_goods'),
+    packages: text(doc, 'Property/Nbers/Total_number_of_packages') || text(doc, 'Item/Packages/Number_of_packages'),
+  };
+  // If the office name does not end with DHL, show the whole port on one line.
+  if (!values.portBottom) {
+    values.portBottom = values.portTop.replace(/ -$/, '');
+    values.portTop = '';
+  }
+  return values;
+}
+function fillReceipt(values) {
+  for (const [k, v] of Object.entries(values)) field(k).textContent = v;
+}
+
+// Used by the Ifada form (index.html), which loads this page in a hidden frame
+// and captures the filled receipt as a page of the statement PDF.
+window.ReceiptPage = {
+  reasons: REASONS,
+  fill(xmlText, { seal = '', reason = REASONS[0] } = {}) {
+    const values = parseReceiptXml(xmlText);
+    fillReceipt(values);
+    field('reason').textContent = reason;
+    field('sealLine').textContent = seal ? `, seal:${seal}, ,` : '';
+    document.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+    return values;
+  },
+  element() { return document.getElementById('page'); }
+};
+
 $('#xmlFile').onchange = async e => {
   const file = e.target.files[0];
   if (!file) return;
   const status = $('#status');
   try {
-    const doc = new DOMParser().parseFromString(await file.text(), 'application/xml');
-    if (doc.querySelector('parsererror') || doc.documentElement.tagName !== 'TWM_PBSAD') {
-      throw new Error('الملف مو بصيغة البيان المتوقعة');
-    }
-    const serial = text(doc, 'Identification/Registration/Serial_number');
-    const number = text(doc, 'Identification/Registration/Number');
-    const values = {
-      date: formatDate(text(doc, 'Identification/Registration/Date')),
-      no: [serial, number].filter(Boolean).join(' '),
-      portTop: [text(doc, 'Identification/Office_segment/Customs_clearance_office_code'),
-                text(doc, 'Identification/Office_segment/Customs_Clearance_office_name').replace(/\s*-?\s*DHL\s*$/i, '')]
-               .filter(Boolean).join(' - ') + ' -',
-      portBottom: (text(doc, 'Identification/Office_segment/Customs_Clearance_office_name').match(/DHL\s*$/i) || [''])[0].trim()
-                  || '',
-      name: text(doc, 'Passenger/FirstName'),
-      passport: text(doc, 'Passenger/PassportNumber'),
-      nationality: text(doc, 'Passenger/Nationality'),
-      vessel: text(doc, 'Transport/Means_of_transport/Border_information/Identity'),
-      country: text(doc, 'General_information/Country/Export/Export_country_name'),
-      address: text(doc, 'Passenger/Address').split(/\r?\n/)[0].trim(),
-      goods: text(doc, 'Item/Goods/Description_of_goods'),
-      packages: text(doc, 'Property/Nbers/Total_number_of_packages') || text(doc, 'Item/Packages/Number_of_packages'),
-    };
-    // If the office name does not end with DHL, show the whole port on one line.
-    if (!values.portBottom) {
-      values.portBottom = values.portTop.replace(/ -$/, '');
-      values.portTop = '';
-    }
-    for (const [k, v] of Object.entries(values)) field(k).textContent = v;
+    const values = parseReceiptXml(await file.text());
+    fillReceipt(values);
     updateReason();
     updateSeal();
     $('#printBtn').disabled = false;
