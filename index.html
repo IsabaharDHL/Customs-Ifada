@@ -1781,6 +1781,13 @@ async function mergeDocumentPdfs(baseBytes, documents) {
       index++;
     }
   }
+  for (const page of output.getPages()) {
+    const { width, height } = page.getSize();
+    if (Math.abs(width - a4.width) > 0.01 || Math.abs(height - a4.height) > 0.01 ||
+        page.getRotation().angle % 360 !== 0) {
+      throw new Error('Inconsistent PDF page dimensions');
+    }
+  }
   return new Blob([await output.save()], { type: 'application/pdf' });
 }
 
@@ -1869,7 +1876,7 @@ async function generatePdf() {
       return rotated.toDataURL('image/jpeg', 0.94);
     });
     for (const imgSrc of [...documentImages, ...generatingImages]) {
-      pdf.addPage();
+      pdf.addPage('a4', 'portrait');
       const img = await loadImage(imgSrc);
       const fit = fitPageContent(img.width, img.height, pageWidth - 20, pageHeight - 20);
       const x = (pageWidth - fit.width) / 2;
@@ -1898,7 +1905,7 @@ async function generatePdf() {
 
     if (viewVersion !== generatingViewVersion || currentIdentity?.uid !== generatingIdentity.uid) throw Object.assign(new Error(), {code:'employee/access-denied'});
     showPreview(pdfUrl, pdfFile, fileName);
-    statusMsg.innerHTML = '<span class="ok">تم توليد الإفادة ✓ راجعها قبل الإرسال</span>';
+    statusMsg.innerHTML = '<span class="ok">تم توليد الإفادة ✓ كل الصفحات A4 بالطول. راجعها قبل الإرسال.</span>';
   } catch (e) {
     statusMsg.textContent = e.code ? employeeAuthErrorMessage(e) : 'تعذر توليد الإفادة أو حفظها. حاول مجدداً.';
     statusMsg.className = 'fieldErr';
