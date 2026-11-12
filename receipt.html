@@ -28,7 +28,12 @@
   .page { width:210mm; min-height:297mm; margin:0 auto; background:#fff; padding:14mm 9mm; position:relative;
           font-family: Calibri, Carlito, "Segoe UI", Arial, sans-serif; color:#000; direction:ltr; }
   .box { border:1px solid #bbb; padding: 9mm 7mm 12mm; min-height: 255mm; }
-  .hdr { display:block; width:100%; }
+  .hdr { display:flex; align-items:center; justify-content:space-between; color:#16264d; padding: 0 2mm; }
+  .hdr-en { width:58mm; text-align:center; font-size:11pt; line-height:1.55; letter-spacing:.2px; }
+  .hdr-en .big { font-size:14.5pt; font-weight:600; }
+  .hdr-emblem { height:22mm; }
+  .hdr-ar { height:23mm; width:58mm; object-fit:contain; }
+  .title { color:#16264d; }
   .title { text-align:center; margin:3mm 0 4mm; line-height:1.25; }
   .title .ar { font-family: Arial, sans-serif; font-size:14pt; }
   .title .en { font-size:12pt; }
@@ -93,7 +98,11 @@
 <div class="page-wrap">
 <div class="page" id="page">
   <div class="box">
-    <img class="hdr" src="receipt-header.png" alt="Kingdom of Bahrain - Ministry of Interior - Customs Affairs">
+    <div class="hdr">
+      <div class="hdr-en"><div>KINGDOM OF BAHRAIN</div><div class="big">Ministry of Interior</div><div>Customs Affairs</div></div>
+      <img class="hdr-emblem" src="receipt-emblem.png" alt="شعار مملكة البحرين">
+      <img class="hdr-ar" src="receipt-arabic.png" alt="مملكة البحرين - وزارة الداخلية - شؤون الجمارك">
+    </div>
     <div class="title"><div class="ar">وصل أمـانـة</div><div class="en">RECEIPT</div></div>
 
     <div class="line" style="margin-top:9mm">
