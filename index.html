@@ -118,7 +118,7 @@
   .scan-panel [role=status] { font-size: 12px; margin: 6px 0; }
   .scan-panel button { margin: 3px; padding: 7px; }
   #sigBackground { display: block; width: 100%; accent-color: var(--navy); }
-  #sigPreview { display: block; max-width: 100%; max-height: 72px; margin-top: 8px; }
+  #sigPreview { display: block; width: 240px; height: 88px; max-width: 100%; object-fit: contain; margin-top: 8px; }
   #generateBtn {
     width: 100%; padding: 16px; font-size: 15.5px; font-weight: bold;
     background: linear-gradient(180deg, var(--gold) 0%, var(--gold-dark) 100%);
@@ -1655,7 +1655,7 @@ function buildTemplate(data, dt) {
       <div style="display:inline-flex; align-items:center; gap:10px;">
         <span>التوقيع:</span>
         ${data.signature
-          ? `<img src="${data.signature}" style="height:50px;max-width:220px;object-fit:contain;">`
+          ? `<img data-pdf-signature src="${data.signature}" style="display:block;width:240px;height:88px;object-fit:contain;visibility:hidden;">`
           : `<div style="border-bottom:1px solid #333; width:170px; height:36px;"></div>`}
       </div>
     </div>
@@ -1732,19 +1732,71 @@ function loadDocumentPdfLibrary() {
   return documentPdfLoading;
 }
 
+function fitPageContent(width, height, areaWidth, areaHeight) {
+  const scale = Math.min(areaWidth / width, areaHeight / height);
+  return { width: width * scale, height: height * scale };
+}
+
+async function insertA4DocumentPage(output, source, index, a4, degrees) {
+  const target = output.insertPage(index, [a4.width, a4.height]);
+  const contents = source.node.Contents();
+  if (!contents || (typeof contents.size === 'function' && contents.size() === 0)) return;
+
+  const crop = source.getCropBox();
+  const media = source.getMediaBox();
+  const left = Math.max(crop.x, media.x), bottom = Math.max(crop.y, media.y);
+  const right = Math.min(crop.x + crop.width, media.x + media.width);
+  const top = Math.min(crop.y + crop.height, media.y + media.height);
+  const width = right - left, height = top - bottom;
+  if (!(width > 0 && height > 0)) return;
+  const rotation = ((source.getRotation().angle % 360) + 360) % 360;
+  const sideways = rotation === 90 || rotation === 270;
+  const margin = 10 * 72 / 25.4;
+  const fit = fitPageContent(sideways ? height : width, sideways ? width : height,
+    a4.width - margin * 2, a4.height - margin * 2);
+  const x = (a4.width - fit.width) / 2;
+  const y = (a4.height - fit.height) / 2;
+  const page = await output.embedPage(source, { left, bottom, right, top });
+  // A source page's /Rotate is clockwise. drawPage takes counterclockwise angles.
+  target.drawPage(page, {
+    x: x + (rotation === 180 || rotation === 270 ? fit.width : 0),
+    y: y + (rotation === 90 || rotation === 180 ? fit.height : 0),
+    width: sideways ? fit.height : fit.width,
+    height: sideways ? fit.width : fit.height,
+    rotate: degrees(-rotation)
+  });
+}
+
 async function mergeDocumentPdfs(baseBytes, documents) {
-  const { PDFDocument } = await loadDocumentPdfLibrary();
+  const { PDFDocument, degrees } = await loadDocumentPdfLibrary();
   const output = await PDFDocument.load(baseBytes);
+  const a4 = output.getPage(0).getSize();
   let index = 1; // Insert after the statement and before the evidence photos.
   for (const document of documents) {
     if (document.pdf) {
-      const pages = await output.copyPages(document.pdf, document.pdf.getPageIndices());
-      for (const page of pages) output.insertPage(index++, page);
+      for (const page of document.pdf.getPages()) {
+        await insertA4DocumentPage(output, page, index++, a4, degrees);
+      }
     } else {
       index++;
     }
   }
   return new Blob([await output.save()], { type: 'application/pdf' });
+}
+
+function measurePdfSignature(template) {
+  const img = template.querySelector('[data-pdf-signature]');
+  if (!img?.naturalWidth || !img.naturalHeight) return null;
+  const layout = template.getBoundingClientRect();
+  const box = img.getBoundingClientRect();
+  const fit = fitPageContent(img.naturalWidth, img.naturalHeight, box.width, box.height);
+  return {
+    src: img.src,
+    x: (box.left - layout.left + (box.width - fit.width) / 2) / layout.width,
+    y: (box.top - layout.top + (box.height - fit.height) / 2) / layout.height,
+    width: fit.width / layout.width,
+    height: fit.height / layout.height
+  };
 }
 
 async function generatePdf() {
@@ -1793,6 +1845,7 @@ async function generatePdf() {
     }
     await new Promise(res => setTimeout(res, 100));
 
+    const signature = measurePdfSignature(holder.firstElementChild);
     const canvas = await html2canvas(holder.firstElementChild, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
     document.body.removeChild(holder);
 
@@ -1800,9 +1853,14 @@ async function generatePdf() {
     const pdf = new jsPDF('p', 'mm', 'a4');
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
-    const imgProps = { w: canvas.width, h: canvas.height };
-    const imgHeight = (imgProps.h * pageWidth) / imgProps.w;
-    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pageWidth, Math.min(imgHeight, pageHeight));
+    const statement = fitPageContent(canvas.width, canvas.height, pageWidth, pageHeight);
+    const statementX = (pageWidth - statement.width) / 2;
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', statementX, 0, statement.width, statement.height);
+    if (signature) {
+      pdf.addImage(signature.src, signature.src.startsWith('data:image/png') ? 'PNG' : 'JPEG',
+        statementX + signature.x * statement.width, signature.y * statement.height,
+        signature.width * statement.width, signature.height * statement.height);
+    }
 
     const documentImages = generatingDocuments.filter(doc => doc.page).map(({ page, angle }) => {
       if (!angle) return page.toDataURL('image/jpeg', 0.94);
@@ -1813,12 +1871,10 @@ async function generatePdf() {
     for (const imgSrc of [...documentImages, ...generatingImages]) {
       pdf.addPage();
       const img = await loadImage(imgSrc);
-      const ratio = Math.min((pageWidth - 20) / img.width, (pageHeight - 20) / img.height);
-      const w = img.width * ratio;
-      const h = img.height * ratio;
-      const x = (pageWidth - w) / 2;
-      const y = (pageHeight - h) / 2;
-      pdf.addImage(imgSrc, 'JPEG', x, y, w, h);
+      const fit = fitPageContent(img.width, img.height, pageWidth - 20, pageHeight - 20);
+      const x = (pageWidth - fit.width) / 2;
+      const y = (pageHeight - fit.height) / 2;
+      pdf.addImage(imgSrc, 'JPEG', x, y, fit.width, fit.height);
     }
 
     const fileName = `ifada_P${data.pNumber || 'draft'}.pdf`;
