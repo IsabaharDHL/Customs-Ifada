@@ -682,20 +682,27 @@ function straightenPaper(source, points) {
 
 function cleanPaper(canvas) {
   const ctx = canvas.getContext('2d');
-  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const lighting = paperLighting(image, 16, 16);
-  for (let y = 0; y < canvas.height; y++) {
-    for (let x = 0; x < canvas.width; x++) {
-      const local = lighting.at(x, y);
-      const i = (y * canvas.width + x) * 4;
-      const value = brightness(image.data, i);
-      const darkest = Math.min(image.data[i], image.data[i + 1], image.data[i + 2]);
-      const lightest = Math.max(image.data[i], image.data[i + 1], image.data[i + 2]);
-      // Lift paper more than dark strokes or saturated stamp ink.
-      const paperWeight = Math.max(0, Math.min(1, (value / Math.max(55, local) - 0.48) / 0.42));
-      const neutralWeight = Math.max(0, 1 - Math.max(0, lightest - darkest - 12) / 42);
-      const lift = Math.min(155, Math.max(0, 255 - local)) * paperWeight * neutralWeight;
-      for (let channel = 0; channel < 3; channel++) image.data[i + channel] += lift;
+  const { width, height } = canvas;
+  const image = ctx.getImageData(0, 0, width, height);
+  const { data } = image;
+  const lighting = paperLighting(image, 24, 24);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const darkest = Math.min(data[i], data[i + 1], data[i + 2]);
+      const lightest = Math.max(data[i], data[i + 1], data[i + 2]);
+      // Keep saturated ink and dark detail. Remap lighter, near-neutral paper
+      // relative to the local lighting, including warm indoor color casts.
+      if (lightest - darkest >= 34) continue;
+      const value = brightness(data, i);
+      const paper = Math.max(85, lighting.at(x, y));
+      const inkFloor = paper * 0.53;
+      if (value <= inkFloor) continue;
+      const whitePoint = paper * 0.84;
+      const weight = Math.min(1, (value - inkFloor) / (whitePoint - inkFloor));
+      for (let channel = 0; channel < 3; channel++) {
+        data[i + channel] += (255 - data[i + channel]) * weight;
+      }
     }
   }
   ctx.putImageData(image, 0, 0);
