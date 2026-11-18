@@ -684,7 +684,6 @@ function cleanPaper(canvas) {
   const ctx = canvas.getContext('2d');
   const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const lighting = paperLighting(image, 16, 16);
-  if (lighting.reference - lighting.low < 12) return;
   for (let y = 0; y < canvas.height; y++) {
     for (let x = 0; x < canvas.width; x++) {
       const local = lighting.at(x, y);
@@ -695,7 +694,7 @@ function cleanPaper(canvas) {
       // Lift paper more than dark strokes or saturated stamp ink.
       const paperWeight = Math.max(0, Math.min(1, (value / Math.max(55, local) - 0.48) / 0.42));
       const neutralWeight = Math.max(0, 1 - Math.max(0, lightest - darkest - 12) / 42);
-      const lift = Math.min(90, Math.max(0, lighting.reference - local - 3)) * paperWeight * neutralWeight;
+      const lift = Math.min(155, Math.max(0, 255 - local)) * paperWeight * neutralWeight;
       for (let channel = 0; channel < 3; channel++) image.data[i + channel] += lift;
     }
   }
@@ -954,7 +953,7 @@ function applyDocumentPhoto(slot, source, points) {
   slot.autoPoints = slot.appliedPoints = null;
   slot.angle = 0;
   slot.editing = false;
-  slot.status.textContent = 'تم تحسين إضاءة الصورة. إذا تبي تقص الحواف، اضغط «تعديل الزوايا».';
+  slot.status.textContent = 'تم تفتيح خلفية الورقة. إذا تبي تقص الحواف، اضغط «تعديل الزوايا».';
   renderScan(slot);
 }
 
